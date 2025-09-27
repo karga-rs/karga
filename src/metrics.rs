@@ -46,6 +46,7 @@ pub(crate) async fn aggregator_task<A: Aggregator, M: Metric>(
         // Imediately aggregate any available metrics
         if !batch.is_empty() {
             agg.aggregate(&batch);
+            batch.clear();
         }
     }
     agg
