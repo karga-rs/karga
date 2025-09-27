@@ -74,7 +74,7 @@ where
             shutdown_signal.store(true, Ordering::Relaxed);
 
             let final_aggregator = aggregator_handle.await.unwrap();
-            self.aggregator.combine(final_aggregator);
+            self.aggregator = self.aggregator.combine(final_aggregator);
         }
     }
 }
