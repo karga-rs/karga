@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::mpsc;
 
@@ -5,24 +7,25 @@ use tokio::sync::mpsc;
 /// Metrics can be composed of other metrics as well
 pub trait Metric
 where
-    Self: Serialize + DeserializeOwned + PartialOrd + PartialEq + Send + Sync + Default,
+    Self: Serialize + DeserializeOwned + PartialOrd + PartialEq + Send + Sync + Default + Debug,
 {
 }
 
 pub trait Aggregator
 where
-    Self: Send + Sync,
+    Self: Send + Sync + Debug,
 {
+    type Metric: Metric;
     fn new() -> Self;
     /// Aggregate metrics into itself
-    fn aggregate<T: Metric>(&mut self, metrics: &[T]);
+    fn aggregate(&mut self, metrics: &[Self::Metric]);
     /// COmbine two different aggregates into one
     fn combine(&self, other: Self) -> Self;
 }
 
 /// Tokio task for efficient metric aggregation
-pub(crate) async fn aggregator_task<A: Aggregator, M: Metric>(
-    mut rx: mpsc::Receiver<M>,
+pub(crate) async fn aggregator_task<A: Aggregator>(
+    mut rx: mpsc::Receiver<A::Metric>,
     batch_size: usize,
 ) -> A {
     let mut agg = A::new();

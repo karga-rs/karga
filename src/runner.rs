@@ -18,23 +18,21 @@ pub enum Stage {
     Hold,
     RampDown,
 }
-pub struct Runner<A, T, F, Fut>
+pub struct Runner<A, F, Fut>
 where
     A: Aggregator,
-    T: Metric,
     F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = T> + Send,
+    Fut: Future<Output = A::Metric> + Send,
 {
-    pub scenarios: Vec<Scenario<T, F, Fut>>,
+    pub scenarios: Vec<Scenario<A::Metric, F, Fut>>,
     pub aggregator: A,
 }
 
-impl<A, T, F, Fut> Runner<A, T, F, Fut>
+impl<A, F, Fut> Runner<A, F, Fut>
 where
     A: Aggregator + 'static,
-    T: Metric + 'static,
     F: Fn() -> Fut + Send + Sync + Copy + Clone + 'static,
-    Fut: Future<Output = T> + Send,
+    Fut: Future<Output = A::Metric> + Send,
 {
     pub fn new() -> Self {
         Self {
@@ -43,7 +41,7 @@ where
         }
     }
 
-    pub fn add_scenario(&mut self, scenario: Scenario<T, F, Fut>) -> &mut Self {
+    pub fn add_scenario(&mut self, scenario: Scenario<A::Metric, F, Fut>) -> &mut Self {
         self.scenarios.push(scenario);
         self
     }
@@ -53,7 +51,8 @@ where
             let (results_tx, results_rx) = mpsc::channel(vus * 10);
             let shutdown_signal = Arc::new(AtomicBool::new(false));
 
-            let aggregator_handle = tokio::spawn(aggregator_task::<A, T>(results_rx, vus * 10));
+            let aggregator_handle =
+                tokio::spawn(aggregator_task::<A>(results_rx, self.workers * 10));
 
             for _ in 0..vus {
                 let action = scenario.action.clone();
