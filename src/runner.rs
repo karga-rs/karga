@@ -9,7 +9,7 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    metrics::{Aggregator, Metric, aggregator_task},
+    metrics::{Aggregate, Metric, aggregator_task},
     scenario::Scenario,
 };
 
@@ -20,7 +20,7 @@ pub enum Stage {
 }
 pub struct Runner<A, F, Fut>
 where
-    A: Aggregator,
+    A: Aggregate,
     F: Fn() -> Fut + Send + Sync + 'static,
     Fut: Future<Output = A::Metric> + Send,
 {
@@ -30,7 +30,7 @@ where
 
 impl<A, F, Fut> Runner<A, F, Fut>
 where
-    A: Aggregator + 'static,
+    A: Aggregate + 'static,
     F: Fn() -> Fut + Send + Sync + Copy + Clone + 'static,
     Fut: Future<Output = A::Metric> + Send,
 {

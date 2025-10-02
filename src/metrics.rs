@@ -11,7 +11,7 @@ where
 {
 }
 
-pub trait Aggregator
+pub trait Aggregate
 where
     Self: Send + Sync + Debug,
 {
@@ -24,7 +24,7 @@ where
 }
 
 /// Tokio task for efficient metric aggregation
-pub(crate) async fn aggregator_task<A: Aggregator>(
+pub(crate) async fn aggregator_task<A: Aggregate>(
     mut rx: mpsc::Receiver<A::Metric>,
     batch_size: usize,
 ) -> A {
