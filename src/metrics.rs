@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::mpsc;
 
@@ -13,7 +14,7 @@ where
 
 pub trait Aggregate
 where
-    Self: Send + Sync + Debug,
+    Self: Send + Sync + Debug + Serialize + DeserializeOwned,
 {
     type Metric: Metric;
     fn new() -> Self;
@@ -53,4 +54,14 @@ pub(crate) async fn aggregator_task<A: Aggregate>(
         }
     }
     agg
+}
+
+/// Reporters are responsible for taking an aggregate and serializing it into json and print to the screen
+/// or send to some service via protobuff, or whatever and however you want it to do. More power to you
+#[async_trait]
+pub trait Reporter
+where
+    Self: Send + Sync + Debug,
+{
+    async fn report<A: Aggregate>(&self, agg: &A) -> Result<(), Box<dyn std::error::Error>>;
 }
