@@ -1,23 +1,28 @@
-use crate::metrics::Metric;
+use typed_builder::TypedBuilder;
 
-#[derive(Debug, Clone)]
-pub struct Scenario<T, F, Fut>
+use crate::metrics::{Metric, Reporter};
+
+#[derive(Debug, Clone, TypedBuilder)]
+pub struct Scenario<T, R, E, F, Fut>
 where
     T: Metric,
-    F: Fn() -> Fut + Send + Sync + 'static,
+    R: Reporter,
+    E: Send + Sync,
+    F: Fn() -> Fut + Send + Sync + Clone + 'static,
     Fut: Future<Output = T> + Send,
 {
     pub name: String,
     pub action: F,
+    pub exec: E,
+    pub reporter: R,
 }
 
-impl<T, F, Fut> Scenario<T, F, Fut>
+impl<T, R, E, F, Fut> Scenario<T, R, E, F, Fut>
 where
     T: Metric,
-    F: Fn() -> Fut + Send + Sync + 'static,
+    R: Reporter,
+    E: Send + Sync,
+    F: Fn() -> Fut + Send + Sync + Clone + 'static,
     Fut: Future<Output = T> + Send,
 {
-    pub fn new(name: String, action: F) -> Self {
-        Self { name, action }
-    }
 }
