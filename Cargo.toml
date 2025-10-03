@@ -1,16 +1,3 @@
-[package]
-name = "karga"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
-serde = { version = "1", features = ["derive"] }
-async-trait = "0.1"
-rayon = "1.11"
-typed-builder = "0.21"
-
-serde_json = { version = "1", optional = true }
-
-[features]
-builtins = ["dep:serde_json"]
+[workspace]
+members = ["karga_core", "karga_macros"]
+resolver = "3"

@@ -4,13 +4,17 @@ use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::mpsc;
 
+
 /// Metrics that should be collected and processed by the framework
 /// Metrics can be composed of other metrics as well
 pub trait Metric
 where
-    Self: Serialize + DeserializeOwned + PartialOrd + PartialEq + Send + Sync + Default + Debug,
+    Self: Serialize + DeserializeOwned + PartialOrd + PartialEq + Send + Sync + Default + Debug + Clone,
 {
 }
+
+
+
 
 pub trait Aggregate
 where
@@ -64,4 +68,22 @@ where
     Self: Send + Sync + Debug,
 {
     async fn report<A: Aggregate>(&self, agg: &A) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+
+#[cfg(feature = "builtins")]
+pub use builtins::*;
+
+#[cfg(feature = "builtins")]
+mod builtins{
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    pub struct BasicMetrics{
+        pub latency: Duration,
+        pub success: bool,
+        pub bytes: usize,
+        pub timestamp: Instant
+    }
 }
