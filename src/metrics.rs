@@ -20,8 +20,8 @@ where
     fn new() -> Self;
     /// Aggregate metrics into itself
     fn aggregate(&mut self, metrics: &[Self::Metric]);
-    /// COmbine two different aggregates into one
-    fn combine(&self, other: Self) -> Self;
+    /// Combine two different aggregates into one
+    fn combine(&mut self, other: Self);
 }
 
 /// Tokio task for efficient metric aggregation
