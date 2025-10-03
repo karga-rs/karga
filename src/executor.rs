@@ -1,27 +1,34 @@
 use async_trait::async_trait;
 
 use crate::{
-    metrics::{Aggregate, Reporter},
+    metrics::{Aggregate},
     scenario::Scenario,
 };
 
 #[async_trait]
-pub trait Executor<A, R, F, Fut>
+pub trait Executor<A, F, Fut>
 where
     Self: Send + Sync + Sized,
     A: Aggregate,
-    R: Reporter,
     F: Fn() -> Fut + Send + Sync + Clone + 'static,
     Fut: Future<Output = A::Metric> + Send,
 {
     async fn exec(
         &self,
-        scenario: &Scenario<A::Metric, R, Self, F, Fut>,
+        scenario: &Scenario<A, Self, F, Fut>,
     ) -> Result<A, Box<dyn std::error::Error>>;
 }
+
 #[cfg(feature = "builtins")]
-pub mod builtins {
+pub use builtins::*;
+
+#[cfg(feature = "builtins")]
+mod builtins {
     use super::*;
+    use tokio::sync::mpsc;
+
+    use crate::metrics::aggregator_task;
+
     use std::{
         sync::{
             Arc,
@@ -30,30 +37,22 @@ pub mod builtins {
         time::Duration,
     };
 
-    use tokio::sync::mpsc;
-
-    use crate::{
-        metrics::{Aggregate, Reporter, aggregator_task},
-        scenario::Scenario,
-    };
-
     pub struct ConstantExecutor {
         duration: Duration,
         workers: usize,
     }
 
     #[async_trait]
-    impl<A, R, F, Fut> Executor<A, R, F, Fut> for ConstantExecutor
+    impl<A, F, Fut> Executor<A, F, Fut> for ConstantExecutor
     where
         Self: Send + Sync + Sized,
         A: Aggregate + 'static,
-        R: Reporter,
         F: Fn() -> Fut + Send + Sync + Clone + 'static,
         Fut: Future<Output = A::Metric> + Send,
     {
         async fn exec(
             &self,
-            scenario: &Scenario<A::Metric, R, Self, F, Fut>,
+            scenario: &Scenario<A, Self, F, Fut>,
         ) -> Result<A, Box<dyn std::error::Error>> {
             let (results_tx, results_rx) = mpsc::channel(self.workers * 10);
             let shutdown_signal = Arc::new(AtomicBool::new(false));

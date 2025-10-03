@@ -1,28 +1,36 @@
+use std::marker::PhantomData;
+
 use typed_builder::TypedBuilder;
 
-use crate::metrics::{Metric, Reporter};
+use crate::{
+    executor::Executor,
+    metrics::{Aggregate},
+};
 
 #[derive(Debug, Clone, TypedBuilder)]
-pub struct Scenario<T, R, E, F, Fut>
+pub struct Scenario<A, E, F, Fut>
 where
-    T: Metric,
-    R: Reporter,
-    E: Send + Sync,
+    A: Aggregate,
+    E: Executor<A, F, Fut> + Send + Sync,
     F: Fn() -> Fut + Send + Sync + Clone + 'static,
-    Fut: Future<Output = T> + Send,
+    Fut: Future<Output = A::Metric> + Send,
 {
+    #[builder(setter(into))]
     pub name: String,
     pub action: F,
-    pub exec: E,
-    pub reporter: R,
+    pub executor: E,
+    aggregator: PhantomData<A>,
 }
 
-impl<T, R, E, F, Fut> Scenario<T, R, E, F, Fut>
+impl<A, E, F, Fut> Scenario<A, E, F, Fut>
 where
-    T: Metric,
-    R: Reporter,
-    E: Send + Sync,
+    A: Aggregate,
+    E: Executor<A, F, Fut> + Send + Sync,
     F: Fn() -> Fut + Send + Sync + Clone + 'static,
-    Fut: Future<Output = T> + Send,
+    Fut: Future<Output = A::Metric> + Send,
 {
+    pub async fn run(&mut self) -> Result<A, Box<dyn std::error::Error>> {
+         self.executor.exec(&self).await
+    }
 }
+
