@@ -42,6 +42,11 @@ mod builtins {
         workers: usize,
     }
 
+    impl ConstantExecutor {
+        pub fn new(duration: Duration, workers: usize) -> Self {
+            Self { duration, workers }
+        }
+    }
     #[async_trait]
     impl<A, F, Fut> Executor<A, F, Fut> for ConstantExecutor
     where

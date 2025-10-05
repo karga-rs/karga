@@ -16,6 +16,7 @@ where
     pub name: String,
     pub action: F,
     pub executor: E,
+    #[builder(default, setter(skip))]
     aggregator: PhantomData<A>,
 }
 
