@@ -10,6 +10,8 @@ async-trait = "0.1"
 rayon = "1.11"
 typed-builder = "0.21"
 serde_json = { version = "1", optional = true }
+karga_macros = { path = "../karga_macros", optional = true }
 
 [features]
-builtins = ["dep:serde_json"]
+macros = ["dep:karga_macros"]
+builtins = ["dep:serde_json", "macros"]

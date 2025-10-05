@@ -114,6 +114,7 @@ name = "karga"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "karga_macros",
  "rayon",
  "serde",
  "serde_json",
