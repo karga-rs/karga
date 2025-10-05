@@ -2,10 +2,7 @@ use std::marker::PhantomData;
 
 use typed_builder::TypedBuilder;
 
-use crate::{
-    executor::Executor,
-    metrics::{Aggregate},
-};
+use crate::{executor::Executor, metrics::Aggregate};
 
 #[derive(Debug, Clone, TypedBuilder)]
 pub struct Scenario<A, E, F, Fut>
@@ -30,7 +27,6 @@ where
     Fut: Future<Output = A::Metric> + Send,
 {
     pub async fn run(&mut self) -> Result<A, Box<dyn std::error::Error>> {
-         self.executor.exec(&self).await
+        self.executor.exec(self).await
     }
 }
-
