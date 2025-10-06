@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
 use karga::{
+    Report, Scenario,
     executor::ConstantExecutor,
-    metrics::{BasicAggregate, BasicMetric, JsonReport, Report},
-    scenario::Scenario,
+    metrics::{BasicAggregate, BasicMetric, JsonReport},
 };
 use reqwest::Client;
 
