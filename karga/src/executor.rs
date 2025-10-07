@@ -1,9 +1,6 @@
 use async_trait::async_trait;
 
-use crate::{
-    metrics::{Aggregate},
-    scenario::Scenario,
-};
+use crate::{metrics::Aggregate, scenario::Scenario};
 
 #[async_trait]
 pub trait Executor<A, F, Fut>
@@ -25,10 +22,8 @@ pub use builtins::*;
 #[cfg(feature = "builtins")]
 mod builtins {
     use super::*;
-    use tokio::sync::mpsc;
 
-    use crate::metrics::aggregator_task;
-
+    use futures::future::join_all;
     use std::{
         sync::{
             Arc,
@@ -43,7 +38,8 @@ mod builtins {
     }
 
     impl ConstantExecutor {
-        pub fn new(duration: Duration, workers: usize) -> Self {
+        pub fn new(duration: Duration, workers_per_cpu: usize) -> Self {
+            let workers = num_cpus::get() * workers_per_cpu;
             Self { duration, workers }
         }
     }
@@ -59,32 +55,36 @@ mod builtins {
             &self,
             scenario: &Scenario<A, Self, F, Fut>,
         ) -> Result<A, Box<dyn std::error::Error>> {
-            let (results_tx, results_rx) = mpsc::channel(self.workers * 10);
             let shutdown_signal = Arc::new(AtomicBool::new(false));
-
-            let aggregator_handle =
-                tokio::spawn(aggregator_task::<A>(results_rx, self.workers * 10));
+            let mut handles = vec![];
 
             for _ in 0..self.workers {
                 let action = scenario.action.clone();
-                let tx = results_tx.clone();
                 let shutdown = Arc::clone(&shutdown_signal);
 
-                tokio::spawn(async move {
+                handles.push(tokio::spawn(async move {
+                    let mut agg = A::new();
                     while !shutdown.load(Ordering::Relaxed) {
                         let metric = action().await;
-                        if tx.send(metric).await.is_err() {
-                            break;
-                        }
+                        agg.consume(&metric);
                     }
-                });
+                    agg
+                }));
             }
-            drop(results_tx);
             tokio::time::sleep(self.duration).await;
             shutdown_signal.store(true, Ordering::Relaxed);
+            let aggs: Vec<A> = join_all(handles)
+                .await
+                .into_iter()
+                .map(|res| res.expect("Task panicked"))
+                .collect();
 
-            let final_aggregator = aggregator_handle.await.unwrap();
-            Ok(final_aggregator)
+            let mut final_agg = A::new();
+            for agg in aggs {
+                final_agg.merge(agg);
+            }
+
+            Ok(final_agg)
         }
     }
 }
