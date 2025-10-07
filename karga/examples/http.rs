@@ -31,7 +31,7 @@ async fn main() {
                 }
             }
         })
-        .executor(ConstantExecutor::new(Duration::from_secs(10), 12))
+        .executor(ConstantExecutor::new(Duration::from_secs(1), 140))
         .build()
         .run()
         .await
