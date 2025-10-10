@@ -197,7 +197,7 @@ where
     F: Fn() -> Fut + Send + Sync + Clone + 'static,
     Fut: Future<Output = A::Metric> + Send,
 {
-    (0..=workers)
+    (0..workers)
         .map(|_| {
             let start = start.clone();
             let shutdown = shutdown.clone();
