@@ -88,6 +88,7 @@ where
         let tokens = Arc::new(AtomicU64::new(0));
         let governor;
 
+        println!("Spawning token governor task...");
         governor = tokio::spawn(token_governor_task(
             start.clone(),
             shutdown.clone(),
@@ -97,6 +98,7 @@ where
             self.bucket_capacity,
         ));
 
+        println!("Spawning workers...");
         let handles = spawn_workers(
             self.workers,
             start.clone(),
@@ -106,21 +108,25 @@ where
         )
         .await;
 
+        println!("Running now!");
         start.store(true, Ordering::Release);
         // The governor task ending means its all over
         // billions must die
         governor.await.expect("Error in token governor task");
         shutdown.store(true, Ordering::Relaxed);
+        println!("Retrieving data from workers...");
         let aggs: Vec<A> = join_all(handles)
             .await
             .into_iter()
             .map(|res| res.expect("Task panicked"))
             .collect();
 
+        println!("Processing results...");
         let mut final_agg = A::new();
         for agg in aggs {
             final_agg.merge(agg);
         }
+        println!("Done!");
 
         Ok(final_agg)
     }
