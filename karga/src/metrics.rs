@@ -28,38 +28,6 @@ where
     fn merge(&mut self, other: Self);
 }
 
-/// Tokio task for efficient metric aggregation
-pub async fn aggregator_task<A: Aggregate>(
-    mut rx: mpsc::Receiver<A::Metric>,
-    batch_size: usize,
-) -> A {
-    let mut agg = A::new();
-    let mut batch = Vec::new();
-
-    loop {
-        // Receive the first metric or end the loop if the sender is dropped
-        match rx.recv().await {
-            Some(metric) => batch.push(metric),
-            None => break,
-        }
-
-        // Receive all other metrics after the first one
-        while batch.len() < batch_size {
-            match rx.try_recv() {
-                Ok(metric) => batch.push(metric),
-                Err(_) => break,
-            }
-        }
-
-        // Imediately aggregate any available metrics
-        if !batch.is_empty() {
-            agg.aggregate(&batch);
-            batch.clear();
-        }
-    }
-    agg
-}
-
 /// Reporters are responsible for taking an aggregate and serializing it into json and print to the screen
 /// or send to some service via protobuff, or whatever and however you want it to do. More power to you
 #[async_trait]
