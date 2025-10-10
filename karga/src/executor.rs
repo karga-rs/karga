@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use typed_builder::TypedBuilder;
 
@@ -87,78 +88,116 @@ where
         let tokens = Arc::new(AtomicU64::new(0));
         let governor;
 
-        {
-            let stages = self.stages.clone();
-            let tokens = Arc::clone(&tokens);
-            let start = Arc::clone(&start);
-            let shutdown = Arc::clone(&shutdown);
-            let tick = self.tick;
-            // Every tick there may be some token leftover, we store them
-            // all here to use later
-            let bucket_capacity = self.bucket_capacity;
+        governor = tokio::spawn(token_governor_task(
+            start.clone(),
+            shutdown.clone(),
+            tokens.clone(),
+            self.stages.clone(),
+            self.tick.clone(),
+            self.bucket_capacity,
+        ));
 
-            governor = tokio::spawn(async move {
-                let mut rate = 0.0;
-                let mut fractional = 0.0;
+        let handles = spawn_workers(
+            self.workers,
+            start.clone(),
+            shutdown.clone(),
+            tokens.clone(),
+            scenario.action.clone(),
+        )
+        .await;
 
-                for stage in stages.into_iter() {
-                    while !start.load(Ordering::Acquire) {
-                        tokio::task::yield_now().await;
-                    }
-                    if shutdown.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if stage.duration.is_zero() {
-                        rate = stage.target;
-                        continue;
-                    }
+        start.store(true, Ordering::Release);
+        // The governor task ending means its all over
+        // billions must die
+        governor.await.expect("Error in token governor task");
+        shutdown.store(true, Ordering::Relaxed);
+        let aggs: Vec<A> = join_all(handles)
+            .await
+            .into_iter()
+            .map(|res| res.expect("Task panicked"))
+            .collect();
 
-                    let stage_start = Instant::now();
-                    let start_rate = rate;
-                    let end_rate = stage.target;
-
-                    loop {
-                        let elapsed = Instant::now().duration_since(stage_start);
-                        if elapsed >= stage.duration {
-                            break;
-                        }
-                        let t = (elapsed.as_secs_f64() / stage.duration.as_secs_f64()).min(1.0);
-                        let tick_rate = start_rate + (end_rate - start_rate) * t;
-                        let add_f = tick_rate * tick.as_secs_f64();
-                        let add_total = (add_f + fractional).floor() as u64;
-                        fractional = (add_f + fractional) - (add_total as f64);
-                        if add_total > 0 {
-                            let mut prev = tokens.load(Ordering::Relaxed);
-                            loop {
-                                let new = prev.saturating_add(add_total).min(bucket_capacity);
-                                match tokens.compare_exchange(
-                                    prev,
-                                    new,
-                                    Ordering::AcqRel,
-                                    Ordering::Relaxed,
-                                ) {
-                                    Ok(_) => break,
-                                    Err(actual) => prev = actual,
-                                }
-                            }
-                        }
-                        tokio::time::sleep(tick).await;
-                    }
-                    // Just to be sure
-                    rate = end_rate;
-                }
-            });
+        let mut final_agg = A::new();
+        for agg in aggs {
+            final_agg.merge(agg);
         }
 
-        let mut handles = Vec::with_capacity(self.workers);
+        Ok(final_agg)
+    }
+}
+pub async fn token_governor_task(
+    start: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+    tokens: Arc<AtomicU64>,
+    stages: Vec<Stage>,
+    tick: Duration,
+    bucket_capacity: u64,
+) {
+    let mut rate = 0.0;
+    let mut fractional = 0.0;
 
-        for _ in 0..self.workers {
-            let action = scenario.action.clone();
-            let shutdown = Arc::clone(&shutdown);
-            let start = Arc::clone(&start);
-            let tokens = Arc::clone(&tokens);
+    for stage in stages.into_iter() {
+        while !start.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
+        if stage.duration.is_zero() {
+            rate = stage.target;
+            continue;
+        }
 
-            handles.push(tokio::spawn(async move {
+        let stage_start = Instant::now();
+        let start_rate = rate;
+        let end_rate = stage.target;
+
+        loop {
+            let elapsed = Instant::now().duration_since(stage_start);
+            if elapsed >= stage.duration {
+                break;
+            }
+            let t = (elapsed.as_secs_f64() / stage.duration.as_secs_f64()).min(1.0);
+            let tick_rate = start_rate + (end_rate - start_rate) * t;
+            let add_f = tick_rate * tick.as_secs_f64();
+            let add_total = (add_f + fractional).floor() as u64;
+            fractional = (add_f + fractional) - (add_total as f64);
+            if add_total > 0 {
+                let mut prev = tokens.load(Ordering::Relaxed);
+                loop {
+                    let new = prev.saturating_add(add_total).min(bucket_capacity);
+                    match tokens.compare_exchange(prev, new, Ordering::AcqRel, Ordering::Relaxed) {
+                        Ok(_) => break,
+                        Err(actual) => prev = actual,
+                    }
+                }
+            }
+            tokio::time::sleep(tick).await;
+        }
+        // Just to be sure
+        rate = end_rate;
+    }
+}
+
+pub async fn spawn_workers<A, F, Fut>(
+    workers: usize,
+    start: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+    tokens: Arc<AtomicU64>,
+    action: F,
+) -> Vec<JoinHandle<A>>
+where
+    A: Aggregate + 'static,
+    F: Fn() -> Fut + Send + Sync + Clone + 'static,
+    Fut: Future<Output = A::Metric> + Send,
+{
+    (0..=workers)
+        .map(|_| {
+            let start = start.clone();
+            let shutdown = shutdown.clone();
+            let tokens = tokens.clone();
+            let action = action.clone();
+            tokio::spawn(async move {
                 let mut agg = A::new();
                 while !start.load(Ordering::Acquire) {
                     tokio::task::yield_now().await;
@@ -180,7 +219,6 @@ where
                             break;
                         }
                     }
-
                     if shutdown.load(Ordering::Relaxed) {
                         break;
                     }
@@ -188,24 +226,7 @@ where
                     agg.consume(&metric);
                 }
                 agg
-            }));
-        }
-        start.store(true, Ordering::Release);
-        // The governor task ending means its all over
-        // billions must die
-        governor.await.expect("Error in token governor task");
-        shutdown.store(true, Ordering::Relaxed);
-        let aggs: Vec<A> = join_all(handles)
-            .await
-            .into_iter()
-            .map(|res| res.expect("Task panicked"))
-            .collect();
-
-        let mut final_agg = A::new();
-        for agg in aggs {
-            final_agg.merge(agg);
-        }
-
-        Ok(final_agg)
-    }
+            })
+        })
+        .collect()
 }
