@@ -1,5 +1,5 @@
 pub mod executor;
-pub use executor::Executor;
+pub use executor::{Executor, StageExecutor};
 pub mod metrics;
 pub use metrics::{Aggregate, Metric, Report};
 pub mod scenario;
