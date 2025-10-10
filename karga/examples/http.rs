@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use karga::{
     Report, Scenario,
-    executor::ConstantExecutor,
+    executor::{Stage, StageExecutor},
     metrics::{BasicAggregate, BasicMetric, JsonReport},
 };
 use reqwest::Client;
@@ -31,7 +31,15 @@ async fn main() {
                 }
             }
         })
-        .executor(ConstantExecutor::new(Duration::from_secs(1), 140))
+        .executor(
+            StageExecutor::builder()
+                .stages(vec![
+                    Stage::new(Duration::from_secs(10), 10.0),
+                    Stage::new(Duration::from_secs(1), 100.0),
+                    Stage::new(Duration::from_secs(10), 1.0),
+                ])
+                .build(),
+        )
         .build()
         .run()
         .await
