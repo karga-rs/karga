@@ -9,7 +9,6 @@ serde = { version = "1", features = ["derive"] }
 async-trait = "0.1"
 rayon = "1.11"
 typed-builder = "0.21"
-serde_json = { version = "1", optional = true }
 karga_macros = { path = "../karga_macros", optional = true }
 futures = "0.3.31"
 num_cpus = "1.16"
@@ -19,5 +18,5 @@ reqwest = "0.12"
 
 [features]
 macros = ["dep:karga_macros"]
-builtins = ["dep:serde_json", "macros"]
+builtins = ["macros"]
 default = ["builtins"]

@@ -1,9 +1,10 @@
 use std::time::{Duration, Instant};
 
 use karga::{
-    Report, Scenario,
+    Reporter, Scenario,
     executor::{Stage, StageExecutor},
-    metrics::{BasicAggregate, BasicMetric, JsonReport},
+    metrics::{BasicAggregate, BasicMetric},
+    report::{BasicReport, StdoutReporter},
 };
 use reqwest::Client;
 
@@ -34,9 +35,8 @@ async fn main() {
         .executor(
             StageExecutor::builder()
                 .stages(vec![
-                    Stage::new(Duration::from_secs(10), 10.0),
-                    Stage::new(Duration::from_secs(1), 100.0),
-                    Stage::new(Duration::from_secs(10), 1.0),
+                    Stage::new(Duration::ZERO, f64::MAX),
+                    Stage::new(Duration::from_secs(10), f64::MAX),
                 ])
                 .build(),
         )
@@ -45,5 +45,7 @@ async fn main() {
         .await
         .unwrap();
 
-    JsonReport::from(results).report().await.unwrap();
+    let report = BasicReport::from(results);
+    // Thats quite strange syntax but whatever
+    StdoutReporter {}.report(report).await.unwrap();
 }

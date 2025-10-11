@@ -1,8 +1,6 @@
 use std::fmt::Debug;
 
-use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
-use tokio::sync::mpsc;
 
 /// Metrics that should be collected and processed by the framework
 /// Metrics can be composed of other metrics as well
@@ -28,24 +26,12 @@ where
     fn merge(&mut self, other: Self);
 }
 
-/// Reporters are responsible for taking an aggregate and serializing it into json and print to the screen
-/// or send to some service via protobuff, or whatever and however you want it to do. More power to you
-#[async_trait]
-pub trait Report<A>
-where
-    Self: Send + Sync + Debug + From<A> + Serialize + DeserializeOwned,
-    A: Aggregate,
-{
-    async fn report(&self) -> Result<(), Box<dyn std::error::Error>>;
-}
-
 #[cfg(feature = "builtins")]
 pub use builtins::*;
 
 #[cfg(feature = "builtins")]
 mod builtins {
     use karga_macros::aggregate;
-    use serde::Deserialize;
 
     use crate::macros::metric;
     use std::time::Duration;
@@ -87,35 +73,6 @@ mod builtins {
             self.success_count += other.success_count;
             self.total_bytes += other.total_bytes;
             self.count += other.count;
-        }
-    }
-
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct JsonReport {
-        pub average_latency: Duration,
-        pub success_ratio: u8,
-        pub total_bytes: usize,
-        pub count: usize,
-    }
-
-    impl From<BasicAggregate> for JsonReport {
-        fn from(value: BasicAggregate) -> Self {
-            Self {
-                average_latency: value.total_latency.div_f64(value.count as f64),
-                success_ratio: ((value.success_count / value.count) * 100)
-                    .try_into()
-                    .unwrap(),
-                total_bytes: value.total_bytes,
-                count: value.count,
-            }
-        }
-    }
-    #[async_trait]
-    impl Report<BasicAggregate> for JsonReport {
-        async fn report(&self) -> Result<(), Box<dyn std::error::Error>> {
-            let value = serde_json::to_string(self)?;
-            println!("{value}");
-            Ok(())
         }
     }
 }
