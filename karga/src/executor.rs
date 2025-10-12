@@ -86,10 +86,9 @@ where
         let start = Arc::new(AtomicBool::new(false));
         let shutdown = Arc::new(AtomicBool::new(false));
         let tokens = Arc::new(AtomicU64::new(0));
-        let governor;
 
         println!("Spawning token governor task...");
-        governor = tokio::spawn(token_governor_task(
+        let governor = tokio::spawn(token_governor_task(
             start.clone(),
             shutdown.clone(),
             tokens.clone(),
