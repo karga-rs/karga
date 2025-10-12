@@ -2,10 +2,18 @@
 name = "karga_macros"
 version = "0.1.0"
 edition = "2024"
+authors = ["Degarti <outragedline@proton.me>"]
+license = "MIT"
+readme = "../README.md"
+description = "Proc macros for the karga load testing framework"
+repository = "https://github.com/outragedline/karga"
+keywords = ["loadtesting", "benchmark", "rps", "performance", "framework"]
+categories = ["development-tools::profiling"]
+publish = true
 
 [lib]
 proc-macro = true
 
 [dependencies]
-syn = "2.0"
+syn = { version = "2.0", features = ["full"] }
 quote = "1.0"

@@ -25,7 +25,7 @@ Clone the repo and run the included example (the examples are intentionally mini
 ```bash
 git clone https://github.com/outragedline/karga.git
 cd karga
-cargo run --example http --features builtins
+cargo run --example http
 ```
 
 That example demonstrates measuring request latency and success (HTTP 200) using a simple executor. Replace the action with any async closure to exercise custom code (Kafka producer, filesystem workload, or any I/O you want).
