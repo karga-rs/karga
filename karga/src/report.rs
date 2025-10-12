@@ -21,7 +21,7 @@ pub use builtins::*;
 
 #[cfg(feature = "builtins")]
 mod builtins {
-    use crate::metrics::BasicAggregate;
+    use crate::aggregate::BasicAggregate;
 
     use super::*;
     #[derive(Debug, Deserialize, Serialize)]

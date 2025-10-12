@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use typed_builder::TypedBuilder;
 
-use crate::{executor::Executor, metrics::Aggregate};
+use crate::{Aggregate, Executor};
 
 #[derive(Debug, Clone, TypedBuilder)]
 pub struct Scenario<A, E, F, Fut>

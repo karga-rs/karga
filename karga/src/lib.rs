@@ -2,8 +2,10 @@ pub mod executor;
 pub mod metric;
 pub mod report;
 pub mod scenario;
+
+pub use aggregate::Aggregate;
 pub use executor::{Executor, StageExecutor};
-pub use metric::{Aggregate, Metric};
+pub use metric::Metric;
 pub use report::{Report, Reporter};
 pub use scenario::Scenario;
 #[cfg(feature = "macros")]

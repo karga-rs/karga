@@ -3,7 +3,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use typed_builder::TypedBuilder;
 
-use crate::{metrics::Aggregate, scenario::Scenario};
+use crate::{aggregate::Aggregate, scenario::Scenario};
 
 use futures::future::join_all;
 use std::{

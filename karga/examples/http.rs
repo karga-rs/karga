@@ -2,17 +2,20 @@ use std::time::{Duration, Instant};
 
 use karga::{
     Reporter, Scenario,
+    aggregate::BasicAggregate,
     executor::{Stage, StageExecutor},
-    metrics::{BasicAggregate, BasicMetric},
+    metric::BasicMetric,
     report::{BasicReport, StdoutReporter},
 };
 use reqwest::Client;
 
 #[tokio::main]
 async fn main() {
+    // NEVER intantiate heavy things like clients inside the action
+    // unless you want to kill performance
     let client = Client::new();
     let results = Scenario::<BasicAggregate, _, _, _>::builder()
-        .name("Basic scenario")
+        .name("Http scenario")
         .action(move || {
             let client = client.clone();
             async move {
@@ -28,15 +31,19 @@ async fn main() {
                 BasicMetric {
                     latency: elapsed,
                     success,
+                    // We dont care about it in this example
                     bytes: 0,
                 }
             }
         })
         .executor(
             StageExecutor::builder()
+                // We start with a certain number of rps growing steady
+                // Then we grow it 10 times faster and go back to normal
                 .stages(vec![
-                    Stage::new(Duration::ZERO, f64::MAX),
-                    Stage::new(Duration::from_secs(10), f64::MAX),
+                    Stage::new(Duration::from_secs(5), 10.0),
+                    Stage::new(Duration::from_secs(5), 100.0),
+                    Stage::new(Duration::from_secs(5), 10.0),
                 ])
                 .build(),
         )
