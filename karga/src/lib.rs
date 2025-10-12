@@ -102,9 +102,9 @@
 //! # Feature flags
 //!
 //! - `macros`: enables small procedural macros that reduce boilerplate when implementing
-//!   common traits and registration. Enable with `--features macros`.
+//!   common traits and registration. (Enabled by default)
 //! - `builtins`: provides basic implementations (`BasicMetric`, `BasicAggregate`,
-//!   `BasicReport`, `StdoutReporter`) for quick experiments and demos.
+//!   `BasicReport`, `StdoutReporter`) for quick experiments and demos. (Enabled by default)
 //!
 //! # Where to start
 //!
