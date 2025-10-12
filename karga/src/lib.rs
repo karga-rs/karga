@@ -51,7 +51,7 @@
 //!     // NEVER instantiate heavy objects like clients inside the action —
 //!     // doing so would severely impact performance.
 //!     let client = Client::new();
-//!     let results = Scenario::<BasicAggregate, _, _, _>::builder()
+//!     let results: BasicAggregate = Scenario::builder()
 //!         .name("HTTP scenario")
 //!         .action(move || {
 //!             let client = client.clone();
