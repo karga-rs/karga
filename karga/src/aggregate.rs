@@ -7,7 +7,7 @@ use std::fmt::Debug;
 /// necessary for later analysis.
 ///
 /// **Important:** `Aggregate` implementations should **not** compute final statistics
-/// such as averages or percentiles. Those derived values belong in a [`Report`], which
+/// such as averages or percentiles. Those derived values belong in a [`crate::Report`], which
 /// is converted from an `Aggregate` and performs the final processing. Aggregates are
 /// responsible for storing compact, mergeable raw data (counts, sums, histograms,
 /// sketches, error counters, etc.) so that the `Report` stage can compute accurate
@@ -71,7 +71,7 @@ use std::fmt::Debug;
 /// ```
 ///
 /// # Provided methods
-/// - [`aggregate`]: a convenience helper that calls [`consume`] for each metric in a slice.
+/// - [`Aggregate::aggregate`]: a convenience helper that calls [`Aggregate::consume`] for each metric in a slice.
 ///
 /// # Implementor notes
 /// - Ensure `merge` is **associative** and **commutative** so that merging order does not
@@ -100,7 +100,7 @@ where
 
     /// Aggregate multiple metrics into the current instance.
     ///
-    /// This default implementation calls [`consume`] for each metric.
+    /// This default implementation calls [`Aggregate::consume`] for each metric.
     fn aggregate(&mut self, metrics: &[Self::Metric]) {
         metrics.iter().for_each(|m| self.consume(m));
     }
@@ -132,7 +132,7 @@ mod builtins {
     /// - **Total bytes:** the total number of bytes transferred.
     /// - **Count:** the total number of samples recorded.
     ///
-    /// These are intentionally low-level metrics — a [`Report`] can later derive averages,
+    /// These are intentionally low-level metrics — a [`crate::Report`] can later derive averages,
     /// percentiles, and success ratios from this raw data without losing precision.
     ///
     /// Enabled via the `builtins` feature.

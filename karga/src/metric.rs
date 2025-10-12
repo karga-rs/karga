@@ -6,8 +6,8 @@ use serde::{Serialize, de::DeserializeOwned};
 ///
 /// Metrics are the most granular level of performance or behavioral data. They may capture
 /// latency, success/failure, throughput, resource usage, or any other quantitative aspect
-/// of an operation. Metrics are later collected and summarized by an [`Aggregate`], then
-/// further analyzed and reported by a [`Report`] and [`Reporter`].
+/// of an operation. Metrics are later collected and summarized by an [`crate::Aggregate`], then
+/// further analyzed and reported by a [`crate::Report`] and [`crate::Reporter`].
 ///
 /// ## Design principles
 /// - **Simple and composable:** metrics should be lightweight and may be composed of other
@@ -48,7 +48,7 @@ use serde::{Serialize, de::DeserializeOwned};
 /// - **bytes:** size or payload associated with the operation
 ///
 /// This metric is sufficient for most load-testing and throughput-analysis scenarios, and is
-/// the default metric type used by [`BasicAggregate`].
+/// the default metric type used by [`crate::aggregate::BasicAggregate`].
 pub trait Metric
 where
     Self: Serialize + DeserializeOwned + PartialOrd + PartialEq + Send + Sync + Debug + Clone,

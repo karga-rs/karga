@@ -7,7 +7,7 @@
 //! (different metrics, executors, reporters, etc.), `Scenario` acts as the glue
 //! that binds them in a cohesive workflow.
 //!
-//! Typically, a scenario is constructed using [`TypedBuilder`] and then executed via
+//! Typically, a scenario is constructed using [`typed_builder::TypedBuilder`] and then executed via
 //! [`Scenario::run`], which delegates the actual work to the provided [`Executor`].
 //!
 //! # Example
