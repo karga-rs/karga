@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 
-use serde::{Serialize, de::DeserializeOwned};
-
 /// A `Metric` represents a single observed measurement produced by the system under test.
 ///
 /// Metrics are the most granular level of performance or behavioral data. They may capture
@@ -51,7 +49,7 @@ use serde::{Serialize, de::DeserializeOwned};
 /// the default metric type used by [`crate::aggregate::BasicAggregate`].
 pub trait Metric
 where
-    Self: Serialize + DeserializeOwned + PartialOrd + PartialEq + Send + Sync + Debug + Clone,
+    Self: PartialOrd + PartialEq + Send + Sync + Debug + Clone,
 {
 }
 

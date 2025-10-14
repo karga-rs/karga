@@ -1,5 +1,4 @@
 use crate::Metric;
-use serde::{Serialize, de::DeserializeOwned};
 use std::fmt::Debug;
 
 /// The `Aggregate` trait defines how raw [`Metric`] values are collected and combined
@@ -90,7 +89,7 @@ use std::fmt::Debug;
 /// format, compress, or enrich reports as needed.
 pub trait Aggregate
 where
-    Self: Serialize + DeserializeOwned + PartialOrd + PartialEq + Send + Sync + Debug + Clone,
+    Self: PartialOrd + PartialEq + Send + Sync + Debug + Clone,
 {
     /// The metric type this aggregate summarizes.
     type Metric: Metric;
