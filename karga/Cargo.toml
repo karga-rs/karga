@@ -20,6 +20,7 @@ typed-builder = "0.21"
 karga_macros = { path = "../karga_macros", version = "0.1.0", optional = true }
 futures = "0.3.31"
 num_cpus = "1.16"
+tracing = "0.1"
 
 [dev-dependencies]
 reqwest = "0.12"
