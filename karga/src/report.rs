@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{fmt::Debug, time::Duration};
 
@@ -74,9 +73,8 @@ where
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait Reporter<A: Aggregate, R: Report<A>> {
-    async fn report(&self, report: R) -> Result<(), Box<dyn std::error::Error>>;
+    fn report(&self, report: &R) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>>;
 }
 
 #[cfg(feature = "builtins")]
@@ -125,9 +123,8 @@ mod builtins {
     /// operations.
     pub struct StdoutReporter;
 
-    #[async_trait]
     impl Reporter<BasicAggregate, BasicReport> for StdoutReporter {
-        async fn report(&self, report: BasicReport) -> Result<(), Box<dyn std::error::Error>> {
+        async fn report(&self, report: &BasicReport) -> Result<(), Box<dyn std::error::Error>> {
             println!("{report:#?}");
             Ok(())
         }

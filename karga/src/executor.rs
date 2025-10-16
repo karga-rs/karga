@@ -101,7 +101,6 @@
 //! - **Choose workers count carefully.** Too few workers limit concurrency; too many waste
 //!   memory and scheduler time. The `num_cpus * 120` default is empirically tuned for
 //!   high-throughput async workloads but might be excessive for CPU-bound actions.
-use async_trait::async_trait;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use typed_builder::TypedBuilder;
@@ -118,7 +117,6 @@ use std::{
     u64,
 };
 
-#[async_trait]
 pub trait Executor<A, F, Fut>
 where
     Self: Send + Sync + Sized,
@@ -127,10 +125,10 @@ where
     Fut: Future<Output = A::Metric> + Send,
 {
     /// Execute the scenario and return the final aggregate.
-    async fn exec(
+    fn exec(
         &self,
         scenario: &Scenario<A, Self, F, Fut>,
-    ) -> Result<A, Box<dyn std::error::Error>>;
+    ) -> impl Future<Output = Result<A, Box<dyn std::error::Error>>> + Send;
 }
 
 /// A stage defines a target RPS and how long to ramp to that target.
@@ -166,7 +164,6 @@ pub struct StageExecutor {
     pub workers: usize,
 }
 
-#[async_trait]
 impl<A, F, Fut> Executor<A, F, Fut> for StageExecutor
 where
     Self: Send + Sync + Sized,
@@ -213,14 +210,13 @@ where
             .into_iter()
             .map(|res| res.expect("Task panicked"))
             .collect();
-
         tracing::info!("Processing results...");
         let mut final_agg = A::new();
         for agg in aggs {
             final_agg.merge(agg);
         }
-        tracing::info!("Done running scenario: {}!", scenario.name);
 
+        tracing::info!("Done running scenario: {}!", scenario.name);
         Ok(final_agg)
     }
 }

@@ -54,5 +54,5 @@ async fn main() {
 
     let report = BasicReport::from(results);
     // Thats quite strange syntax but whatever
-    StdoutReporter {}.report(report).await.unwrap();
+    StdoutReporter {}.report(&report).await.unwrap();
 }
