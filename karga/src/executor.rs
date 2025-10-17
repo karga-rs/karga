@@ -362,3 +362,38 @@ where
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Metric, macros::*};
+    #[metric]
+    struct EmptyMetric;
+
+    #[aggregate]
+    struct EmptyAggregate;
+
+    impl Aggregate for EmptyAggregate {
+        type Metric = EmptyMetric;
+
+        fn new() -> Self {
+            Self {}
+        }
+
+        fn consume(&mut self, _: &Self::Metric) {}
+
+        fn merge(&mut self, _: Self) {}
+    }
+
+    #[tokio::test]
+    async fn spawn_expected_number_of_workers() {
+        let n = 10;
+        let start = Arc::new(AtomicBool::new(true));
+        let shutdown = Arc::new(AtomicBool::new(true));
+        let tokens = Arc::new(AtomicU64::new(0));
+        let action = || async { EmptyMetric {} };
+        let workers: Vec<JoinHandle<EmptyAggregate>> =
+            spawn_workers(n, start, shutdown, tokens, action).await;
+        assert_eq!(workers.len(), n);
+    }
+}
