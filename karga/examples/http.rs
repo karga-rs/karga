@@ -11,7 +11,7 @@ use reqwest::Client;
 
 #[tokio::main]
 async fn main() {
-    // NEVER intantiate heavy things like clients inside the action
+    tracing_subscriber::fmt().init(); // NEVER intantiate heavy things like clients inside the action
     // unless you want to kill performance
     let client = Client::new();
     let results: BasicAggregate = Scenario::builder()
@@ -40,11 +40,7 @@ async fn main() {
             StageExecutor::builder()
                 // We start with a certain number of rps growing steady
                 // Then we grow it 10 times faster and go back to normal
-                .stages(vec![
-                    Stage::new(Duration::from_secs(5), 10.0),
-                    Stage::new(Duration::from_secs(5), 100.0),
-                    Stage::new(Duration::from_secs(5), 10.0),
-                ])
+                .stages(vec![Stage::new(Duration::from_secs(1), 10.0)])
                 .build(),
         )
         .build()
