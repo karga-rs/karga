@@ -344,10 +344,7 @@ where
                             }
                             continue;
                         }
-                        if tokens
-                            .compare_exchange(cur, cur - 1, Ordering::AcqRel, Ordering::Relaxed)
-                            .is_ok()
-                        {
+                        if tokens.fetch_sub(1, Ordering::Relaxed) > 0 {
                             break;
                         }
                     }
