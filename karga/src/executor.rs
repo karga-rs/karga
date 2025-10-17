@@ -336,7 +336,7 @@ where
                 }
                 while !shutdown.load(Ordering::Relaxed) {
                     loop {
-                        let cur = tokens.load(Ordering::Acquire);
+                        let cur = tokens.load(Ordering::Relaxed);
                         if cur == 0 {
                             tokio::time::sleep(Duration::from_millis(1)).await;
                             if shutdown.load(Ordering::Relaxed) {
