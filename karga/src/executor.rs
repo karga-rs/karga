@@ -258,15 +258,16 @@ pub async fn token_governor_task(
             if elapsed >= stage.duration {
                 break;
             }
-            // interpolation factor [0..1]
-            let t = (elapsed.as_secs_f64() / stage.duration.as_secs_f64()).min(1.0);
-            // linear interpolation
-            let tick_rate = start_rate + (end_rate - start_rate) * t;
-            // tokens to add this tick as float
-            let add_f = tick_rate * tick.as_secs_f64();
-            // convert float tokens to integer (carry the fractional part)
-            let add_total = (add_f + fractional).floor() as u64;
-            fractional = (add_f + fractional) - (add_total as f64);
+
+            let (add_total, f) = calc_token_limit(
+                elapsed,
+                stage.duration,
+                start_rate,
+                end_rate,
+                fractional,
+                tick,
+            );
+            fractional = f;
             if add_total > 0 {
                 // atomic saturating add with cas loop
                 let mut prev = tokens.load(Ordering::Relaxed);
@@ -285,6 +286,28 @@ pub async fn token_governor_task(
         // accumulating small rounding errors
         rate = end_rate;
     }
+}
+
+/// Pure function responsible for calculating the number of tokens to be added this tick
+/// returning the total and the fractional
+pub fn calc_token_limit(
+    elapsed: Duration,
+    stage_duration: Duration,
+    start_rate: f64,
+    end_rate: f64,
+    fractional: f64,
+    tick: Duration,
+) -> (u64, f64) {
+    // interpolation factor [0..1]
+    let t = (elapsed.as_secs_f64() / stage_duration.as_secs_f64()).min(1.0);
+    // linear interpolation
+    let tick_rate = start_rate + (end_rate - start_rate) * t;
+    // tokens to add this tick as float
+    let add_f = tick_rate * tick.as_secs_f64();
+    // convert float tokens to integer (carry the fractional part)
+    let add_total = (add_f + fractional).floor() as u64;
+    let fractional = (add_f + fractional) - (add_total as f64);
+    (add_total, fractional)
 }
 
 /// Spawn `workers` Tokio tasks. Each worker claims tokens and executes the `action`.
