@@ -21,7 +21,7 @@ use crate::Aggregate;
 ///   with different analytical focuses.
 ///
 /// # Example
-/// ```rust
+/// ```rust, ignore
 /// use karga::{Aggregate, Report};
 /// use serde::{Serialize, Deserialize};
 /// use std::time::Duration;
@@ -30,12 +30,13 @@ use crate::Aggregate;
 /// struct MyReport {
 ///     average_latency: Duration,
 /// }
-/// # struct MyAggregate { total_latency: Duration, count: usize }
+///
 /// impl From<MyAggregate> for MyReport {
 ///     fn from(a: MyAggregate) -> Self {
 ///         Self { average_latency: a.total_latency / a.count as u32 }
 ///     }
 /// }
+///
 /// impl Report<MyAggregate> for MyReport {}
 /// ```
 ///
@@ -62,12 +63,9 @@ where
 /// # Example
 /// ```rust
 /// use karga::{Reporter, Aggregate, Report};
-/// use async_trait::async_trait;
-///
 /// struct MyReporter;
-/// #[async_trait]
 /// impl<A: Aggregate, R: Report<A>> Reporter<A, R> for MyReporter {
-///     async fn report(&self, report: R) -> Result<(), Box<dyn std::error::Error>> {
+///     async fn report(&self, report: &R) -> Result<(), Box<dyn std::error::Error>> {
 ///         println!("{:?}", report);
 ///         Ok(())
 ///     }

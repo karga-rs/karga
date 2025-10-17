@@ -35,14 +35,16 @@
 //!
 //! A simple HTTP example:
 //!
-//! ```rust
+//! ```rust,no_run
 //! use std::time::{Duration, Instant};
 //!
 //! use karga::{
 //!     Reporter, Scenario,
-//!     executor::{Stage, StageExecutor},
-//!     metric::{BasicAggregate, BasicMetric},
-//!     report::{BasicReport, StdoutReporter},
+//!     Stage, StageExecutor,
+//! aggregate::
+//!     BasicAggregate, metric::BasicMetric,
+//! report::{
+//!     BasicReport, StdoutReporter},
 //! };
 //! use reqwest::Client;
 //!
@@ -92,7 +94,7 @@
 //!
 //!     let report = BasicReport::from(results);
 //!     // Slightly unusual syntax, but valid.
-//!     StdoutReporter {}.report(report).await.unwrap();
+//!     StdoutReporter {}.report(&report).await.unwrap();
 //! }
 //! ```
 //!
@@ -124,7 +126,7 @@ pub mod report;
 pub mod scenario;
 
 pub use aggregate::Aggregate;
-pub use executor::{Executor, StageExecutor};
+pub use executor::{Executor, Stage, StageExecutor};
 pub use metric::Metric;
 pub use report::{Report, Reporter};
 pub use scenario::Scenario;
