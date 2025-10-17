@@ -241,7 +241,9 @@ pub async fn token_governor_task(
         if shutdown.load(Ordering::Relaxed) {
             break;
         }
-        // instant change — jump to target rate
+        // instantly jump to target rate
+        // This technique make it possible to handle spikes or
+        // start at a different rate in the same api
         if stage.duration.is_zero() {
             rate = stage.target;
             continue;
