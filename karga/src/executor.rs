@@ -101,6 +101,8 @@
 //! - **Choose workers count carefully.** Too few workers limit concurrency; too many waste
 //!   memory and scheduler time. The `num_cpus * 120` default is empirically tuned for
 //!   high-throughput async workloads but might be excessive for CPU-bound actions.
+use tokio::sync::Mutex;
+use tokio::sync::watch::{self, Receiver};
 use tokio::time::Instant;
 use tokio::{sync::Notify, task::JoinHandle};
 use typed_builder::TypedBuilder;
@@ -176,13 +178,14 @@ where
         scenario: &Scenario<A, Self, F, Fut>,
     ) -> Result<A, Box<dyn std::error::Error>> {
         let start = Arc::new(Notify::new());
-        let shutdown = Arc::new(AtomicBool::new(false));
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
         let tokens = Arc::new(AtomicU64::new(0));
 
         tracing::info!("Spawning token governor task...");
         let governor = tokio::spawn(token_governor_task(
             start.clone(),
-            shutdown.clone(),
+            shutdown_rx.clone(),
             tokens.clone(),
             self.stages.clone(),
             self.tick.clone(),
@@ -193,7 +196,7 @@ where
         let handles = spawn_workers(
             self.workers,
             start.clone(),
-            shutdown.clone(),
+            shutdown_rx.clone(),
             tokens.clone(),
             scenario.action.clone(),
         )
@@ -203,7 +206,7 @@ where
         start.notify_waiters();
         // The governor task ending means it's all over
         governor.await.expect("Error in token governor task");
-        shutdown.store(true, Ordering::Relaxed);
+        shutdown_tx.send(true)?;
         tracing::info!("Retrieving data from workers...");
         let aggs: Vec<A> = join_all(handles)
             .await
@@ -224,66 +227,76 @@ where
 /// Governor task that increments the shared token counter according to stages.
 pub async fn token_governor_task(
     start: Arc<Notify>,
-    shutdown: Arc<AtomicBool>,
+    mut shutdown: Receiver<bool>,
     tokens: Arc<AtomicU64>,
     stages: Vec<Stage>,
     tick: Duration,
     bucket_capacity: u64,
 ) {
-    let mut rate = 0.0;
-    let mut fractional = 0.0;
+    let main_task = || async {
+        let mut rate = 0.0;
+        let mut fractional = 0.0;
 
-    for stage in stages.into_iter() {
-        // wait until the benchmark has started
-        start.notified().await;
-        if shutdown.load(Ordering::Relaxed) {
-            break;
-        }
-        // instantly jump to target rate
-        // This technique make it possible to handle spikes or
-        // start at a different rate in the same api
-        if stage.duration.is_zero() {
-            rate = stage.target;
-            continue;
-        }
-
-        let stage_start = Instant::now();
-        let start_rate = rate;
-        let end_rate = stage.target;
-
-        loop {
-            let elapsed = Instant::now().duration_since(stage_start);
-            if elapsed >= stage.duration {
-                break;
+        for stage in stages.into_iter() {
+            // wait until the benchmark has started
+            start.notified().await;
+            // instantly jump to target rate
+            // This technique make it possible to handle spikes or
+            // start at a different rate in the same api
+            if stage.duration.is_zero() {
+                rate = stage.target;
+                continue;
             }
 
-            let (add_total, f) = calc_token_limit(
-                elapsed,
-                stage.duration,
-                start_rate,
-                end_rate,
-                fractional,
-                tick,
-            );
-            fractional = f;
-            if add_total > 0 {
-                // atomic saturating add with cas loop
-                let mut prev = tokens.load(Ordering::Relaxed);
-                loop {
-                    let new = prev.saturating_add(add_total).min(bucket_capacity);
-                    match tokens.compare_exchange(prev, new, Ordering::AcqRel, Ordering::Relaxed) {
-                        Ok(_) => break,
-                        Err(actual) => prev = actual,
+            let stage_start = Instant::now();
+            let start_rate = rate;
+            let end_rate = stage.target;
+
+            loop {
+                let elapsed = Instant::now().duration_since(stage_start);
+                if elapsed >= stage.duration {
+                    break;
+                }
+
+                let (add_total, f) = calc_token_limit(
+                    elapsed,
+                    stage.duration,
+                    start_rate,
+                    end_rate,
+                    fractional,
+                    tick,
+                );
+                fractional = f;
+                if add_total > 0 {
+                    // atomic saturating add with cas loop
+                    let mut prev = tokens.load(Ordering::Relaxed);
+                    loop {
+                        let new = prev.saturating_add(add_total).min(bucket_capacity);
+                        match tokens.compare_exchange(
+                            prev,
+                            new,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        ) {
+                            Ok(_) => break,
+                            Err(actual) => prev = actual,
+                        }
                     }
                 }
+                tokio::time::sleep(tick).await;
             }
-            tokio::time::sleep(tick).await;
+            // Just to be sure the internal rate matches the stage target
+            // so the next stage always start from the correct point and prevent
+            // accumulating small rounding errors
+            rate = end_rate;
         }
-        // Just to be sure the internal rate matches the stage target
-        // so the next stage always start from the correct point and prevent
-        // accumulating small rounding errors
-        rate = end_rate;
-    }
+    };
+
+    tokio::select! {
+        _ = main_task() =>{}
+        _ = shutdown.wait_for(|b|*b) => {}
+
+    };
 }
 
 /// Pure function responsible for calculating the number of tokens to be added this tick
@@ -312,7 +325,7 @@ pub fn calc_token_limit(
 pub async fn spawn_workers<A, F, Fut>(
     workers: usize,
     start: Arc<Notify>,
-    shutdown: Arc<AtomicBool>,
+    shutdown: Receiver<bool>,
     tokens: Arc<AtomicU64>,
     action: F,
 ) -> Vec<JoinHandle<A>>
@@ -324,36 +337,39 @@ where
     (0..workers)
         .map(|_| {
             let start = start.clone();
-            let shutdown = shutdown.clone();
+            let mut shutdown = shutdown.clone();
             let tokens = tokens.clone();
             let action = action.clone();
             tokio::spawn(async move {
-                let mut agg = A::new();
-                // Will hang if task is never started
-                // I will handle it with a really safe shutdown
-                // technique like racing futures or whatever
-                start.notified().await;
-                while !shutdown.load(Ordering::Relaxed) {
+                let agg = Arc::new(Mutex::new(A::new()));
+                let main_task = || async {
+                    let agg = agg.clone();
+                    start.notified().await;
                     loop {
-                        let cur = tokens.load(Ordering::Relaxed);
-                        if cur == 0 {
-                            tokio::time::sleep(Duration::from_millis(1)).await;
-                            if shutdown.load(Ordering::Relaxed) {
+                        loop {
+                            let cur = tokens.load(Ordering::Relaxed);
+                            if cur == 0 {
+                                tokio::time::sleep(Duration::from_millis(1)).await;
+                                continue;
+                            }
+                            if tokens.fetch_sub(1, Ordering::Relaxed) > 0 {
                                 break;
                             }
-                            continue;
                         }
-                        if tokens.fetch_sub(1, Ordering::Relaxed) > 0 {
-                            break;
-                        }
+                        let metric = action().await;
+                        agg.lock().await.consume(&metric);
                     }
-                    if shutdown.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let metric = action().await;
-                    agg.consume(&metric);
-                }
-                agg
+                };
+                tokio::select! {
+                    _ = main_task() =>{}
+                    _ = shutdown.wait_for(|b|*b) => {}
+
+                };
+
+                // Shouldnt usually be a problem, if it is i fucked up really bad im sorry
+                Arc::try_unwrap(agg)
+                    .expect("Arc::try_unwrap on aggregator failed")
+                    .into_inner()
             })
         })
         .collect()
@@ -385,11 +401,12 @@ mod tests {
     async fn spawn_expected_number_of_workers() {
         let n = 10;
         let start = Arc::new(Notify::new());
-        let shutdown = Arc::new(AtomicBool::new(true));
+        let (_, shutdown) = watch::channel(true);
         let tokens = Arc::new(AtomicU64::new(0));
         let action = || async { EmptyMetric {} };
         let workers: Vec<JoinHandle<EmptyAggregate>> =
             spawn_workers(n, start, shutdown, tokens, action).await;
+
         assert_eq!(workers.len(), n);
     }
 }
