@@ -113,7 +113,7 @@ use futures::future::join_all;
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
     u64,
@@ -181,12 +181,14 @@ where
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let tokens = Arc::new(AtomicU64::new(0));
+        let tokens_added = Arc::new(Notify::new());
 
         tracing::info!("Spawning token governor task...");
         let governor = tokio::spawn(token_governor_task(
             start.clone(),
             shutdown_rx.clone(),
             tokens.clone(),
+            tokens_added.clone(),
             self.stages.clone(),
             self.tick.clone(),
             self.bucket_capacity,
@@ -198,6 +200,7 @@ where
             start.clone(),
             shutdown_rx.clone(),
             tokens.clone(),
+            tokens_added.clone(),
             scenario.action.clone(),
         )
         .await;
@@ -229,6 +232,7 @@ pub async fn token_governor_task(
     start: Arc<Notify>,
     mut shutdown: Receiver<bool>,
     tokens: Arc<AtomicU64>,
+    tokens_added: Arc<Notify>,
     stages: Vec<Stage>,
     tick: Duration,
     bucket_capacity: u64,
@@ -278,7 +282,10 @@ pub async fn token_governor_task(
                             Ordering::AcqRel,
                             Ordering::Relaxed,
                         ) {
-                            Ok(_) => break,
+                            Ok(_) => {
+                                tokens_added.notify_waiters();
+                                break;
+                            }
                             Err(actual) => prev = actual,
                         }
                     }
@@ -327,6 +334,7 @@ pub async fn spawn_workers<A, F, Fut>(
     start: Arc<Notify>,
     shutdown: Receiver<bool>,
     tokens: Arc<AtomicU64>,
+    tokens_added: Arc<Notify>,
     action: F,
 ) -> Vec<JoinHandle<A>>
 where
@@ -339,6 +347,7 @@ where
             let start = start.clone();
             let mut shutdown = shutdown.clone();
             let tokens = tokens.clone();
+            let tokens_added = tokens_added.clone();
             let action = action.clone();
             tokio::spawn(async move {
                 let agg = Arc::new(Mutex::new(A::new()));
@@ -349,7 +358,7 @@ where
                         loop {
                             let cur = tokens.load(Ordering::Relaxed);
                             if cur == 0 {
-                                tokio::time::sleep(Duration::from_millis(1)).await;
+                                tokens_added.notified().await;
                                 continue;
                             }
                             if tokens.fetch_sub(1, Ordering::Relaxed) > 0 {
@@ -403,9 +412,10 @@ mod tests {
         let start = Arc::new(Notify::new());
         let (_, shutdown) = watch::channel(true);
         let tokens = Arc::new(AtomicU64::new(0));
+        let tokens_added = Arc::new(Notify::new());
         let action = || async { EmptyMetric {} };
         let workers: Vec<JoinHandle<EmptyAggregate>> =
-            spawn_workers(n, start, shutdown, tokens, action).await;
+            spawn_workers(n, start, shutdown, tokens, tokens_added, action).await;
 
         assert_eq!(workers.len(), n);
     }
