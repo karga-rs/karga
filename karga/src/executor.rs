@@ -101,8 +101,8 @@
 //! - **Choose workers count carefully.** Too few workers limit concurrency; too many waste
 //!   memory and scheduler time. The `num_cpus * 120` default is empirically tuned for
 //!   high-throughput async workloads but might be excessive for CPU-bound actions.
-use tokio::task::JoinHandle;
 use tokio::time::Instant;
+use tokio::{sync::Notify, task::JoinHandle};
 use typed_builder::TypedBuilder;
 
 use crate::{aggregate::Aggregate, scenario::Scenario};
@@ -175,7 +175,7 @@ where
         &self,
         scenario: &Scenario<A, Self, F, Fut>,
     ) -> Result<A, Box<dyn std::error::Error>> {
-        let start = Arc::new(AtomicBool::new(false));
+        let start = Arc::new(Notify::new());
         let shutdown = Arc::new(AtomicBool::new(false));
         let tokens = Arc::new(AtomicU64::new(0));
 
@@ -200,7 +200,7 @@ where
         .await;
 
         tracing::info!("Running now!");
-        start.store(true, Ordering::Release);
+        start.notify_waiters();
         // The governor task ending means it's all over
         governor.await.expect("Error in token governor task");
         shutdown.store(true, Ordering::Relaxed);
@@ -223,7 +223,7 @@ where
 
 /// Governor task that increments the shared token counter according to stages.
 pub async fn token_governor_task(
-    start: Arc<AtomicBool>,
+    start: Arc<Notify>,
     shutdown: Arc<AtomicBool>,
     tokens: Arc<AtomicU64>,
     stages: Vec<Stage>,
@@ -235,9 +235,7 @@ pub async fn token_governor_task(
 
     for stage in stages.into_iter() {
         // wait until the benchmark has started
-        while !start.load(Ordering::Acquire) {
-            tokio::task::yield_now().await;
-        }
+        start.notified().await;
         if shutdown.load(Ordering::Relaxed) {
             break;
         }
@@ -313,7 +311,7 @@ pub fn calc_token_limit(
 /// Spawn `workers` Tokio tasks. Each worker claims tokens and executes the `action`.
 pub async fn spawn_workers<A, F, Fut>(
     workers: usize,
-    start: Arc<AtomicBool>,
+    start: Arc<Notify>,
     shutdown: Arc<AtomicBool>,
     tokens: Arc<AtomicU64>,
     action: F,
@@ -331,9 +329,10 @@ where
             let action = action.clone();
             tokio::spawn(async move {
                 let mut agg = A::new();
-                while !start.load(Ordering::Acquire) {
-                    tokio::task::yield_now().await;
-                }
+                // Will hang if task is never started
+                // I will handle it with a really safe shutdown
+                // technique like racing futures or whatever
+                start.notified().await;
                 while !shutdown.load(Ordering::Relaxed) {
                     loop {
                         let cur = tokens.load(Ordering::Relaxed);
@@ -385,7 +384,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_expected_number_of_workers() {
         let n = 10;
-        let start = Arc::new(AtomicBool::new(true));
+        let start = Arc::new(Notify::new());
         let shutdown = Arc::new(AtomicBool::new(true));
         let tokens = Arc::new(AtomicU64::new(0));
         let action = || async { EmptyMetric {} };
