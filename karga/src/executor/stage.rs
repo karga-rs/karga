@@ -112,7 +112,10 @@ where
     }
 }
 
-pub mod internals {
+#[cfg(feature = "internals")]
+pub use internals::*;
+
+mod internals {
     use super::*;
     /// Governor task that increments the shared token counter according to stages.
     pub async fn token_governor_task(

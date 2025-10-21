@@ -27,4 +27,5 @@ tracing-subscriber = "0.3"
 [features]
 macros = ["dep:karga_macros"]
 builtins = ["macros"]
+internals = []
 default = ["builtins"]
