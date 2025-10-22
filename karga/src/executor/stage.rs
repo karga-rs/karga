@@ -62,36 +62,20 @@ where
         &self,
         scenario: &Scenario<A, Self, F, Fut>,
     ) -> Result<A, Box<dyn std::error::Error>> {
-        let start = Arc::new(Notify::new());
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-        let tokens = Arc::new(AtomicU64::new(0));
-        let tokens_added = Arc::new(Notify::new());
-
+        let (ctx, shutdown_tx) = ExecutionContext::new();
         tracing::info!("Spawning token governor task...");
         let governor = tokio::spawn(token_governor_task(
-            start.clone(),
-            shutdown_rx.clone(),
-            tokens.clone(),
-            tokens_added.clone(),
+            ctx.clone(),
             self.stages.clone(),
             self.tick.clone(),
             self.bucket_capacity,
         ));
 
         tracing::info!("Spawning workers...");
-        let handles = spawn_workers(
-            self.workers,
-            start.clone(),
-            shutdown_rx.clone(),
-            tokens.clone(),
-            tokens_added.clone(),
-            scenario.action.clone(),
-        )
-        .await;
+        let handles = spawn_workers(ctx.clone(), self.workers, scenario.action.clone()).await;
 
         tracing::info!("Running now!");
-        start.notify_waiters();
+        ctx.start.notify_waiters();
         // The governor task ending means it's all over
         governor.await.expect("Error in token governor task");
         shutdown_tx.send(true)?;
@@ -116,13 +100,36 @@ where
 pub use internals::*;
 
 mod internals {
+    use tokio::sync::watch::Sender;
+
     use super::*;
+
+    #[derive(Clone)]
+    pub struct ExecutionContext {
+        pub start: Arc<Notify>,
+        pub shutdown: Receiver<bool>,
+        pub tokens: Arc<AtomicU64>,
+        pub tokens_added: Arc<Notify>,
+    }
+
+    impl ExecutionContext {
+        pub fn new() -> (Self, Sender<bool>) {
+            let (tx, rx) = watch::channel(false);
+            (
+                Self {
+                    start: Arc::new(Notify::new()),
+                    shutdown: rx,
+                    tokens: Arc::new(AtomicU64::new(0)),
+                    tokens_added: Arc::new(Notify::new()),
+                },
+                tx,
+            )
+        }
+    }
+
     /// Governor task that increments the shared token counter according to stages.
     pub async fn token_governor_task(
-        start: Arc<Notify>,
-        mut shutdown: Receiver<bool>,
-        tokens: Arc<AtomicU64>,
-        tokens_added: Arc<Notify>,
+        mut ctx: ExecutionContext,
         stages: Vec<Stage>,
         tick: Duration,
         bucket_capacity: u64,
@@ -133,7 +140,7 @@ mod internals {
 
             for stage in stages.into_iter() {
                 // wait until the benchmark has started
-                start.notified().await;
+                ctx.start.notified().await;
                 // instantly jump to target rate
                 // This technique make it possible to handle spikes or
                 // start at a different rate in the same api
@@ -163,17 +170,17 @@ mod internals {
                     fractional = f;
                     if add_total > 0 {
                         // atomic saturating add with cas loop
-                        let mut prev = tokens.load(Ordering::Relaxed);
+                        let mut prev = ctx.tokens.load(Ordering::Relaxed);
                         loop {
                             let new = prev.saturating_add(add_total).min(bucket_capacity);
-                            match tokens.compare_exchange(
+                            match ctx.tokens.compare_exchange(
                                 prev,
                                 new,
                                 Ordering::AcqRel,
                                 Ordering::Relaxed,
                             ) {
                                 Ok(_) => {
-                                    tokens_added.notify_waiters();
+                                    ctx.tokens_added.notify_waiters();
                                     break;
                                 }
                                 Err(actual) => prev = actual,
@@ -191,7 +198,7 @@ mod internals {
 
         tokio::select! {
             _ = main_task() =>{}
-            _ = shutdown.wait_for(|b|*b) => {}
+            _ = ctx.shutdown.wait_for(|b|*b) => {}
 
         };
     }
@@ -220,11 +227,8 @@ mod internals {
 
     /// Spawn `workers` Tokio tasks. Each worker claims tokens and executes the `action`.
     pub async fn spawn_workers<A, F, Fut>(
+        ctx: ExecutionContext,
         workers: usize,
-        start: Arc<Notify>,
-        shutdown: Receiver<bool>,
-        tokens: Arc<AtomicU64>,
-        tokens_added: Arc<Notify>,
         action: F,
     ) -> Vec<JoinHandle<A>>
     where
@@ -234,24 +238,21 @@ mod internals {
     {
         (0..workers)
             .map(|_| {
-                let start = start.clone();
-                let mut shutdown = shutdown.clone();
-                let tokens = tokens.clone();
-                let tokens_added = tokens_added.clone();
+                let mut ctx = ctx.clone();
                 let action = action.clone();
                 tokio::spawn(async move {
                     let agg = Arc::new(Mutex::new(A::new()));
                     let main_task = || async {
                         let agg = agg.clone();
-                        start.notified().await;
+                        ctx.start.notified().await;
                         loop {
                             loop {
-                                let cur = tokens.load(Ordering::Relaxed);
+                                let cur = ctx.tokens.load(Ordering::Relaxed);
                                 if cur == 0 {
-                                    tokens_added.notified().await;
+                                    ctx.tokens_added.notified().await;
                                     continue;
                                 }
-                                if tokens.fetch_sub(1, Ordering::Relaxed) > 0 {
+                                if ctx.tokens.fetch_sub(1, Ordering::Relaxed) > 0 {
                                     break;
                                 }
                             }
@@ -261,7 +262,7 @@ mod internals {
                     };
                     tokio::select! {
                         _ = main_task() =>{}
-                        _ = shutdown.wait_for(|b|*b) => {}
+                        _ = ctx.shutdown.wait_for(|b|*b) => {}
 
                     };
 
@@ -300,13 +301,9 @@ mod tests {
     #[tokio::test]
     async fn spawn_expected_number_of_workers() {
         let n = 10;
-        let start = Arc::new(Notify::new());
-        let (_, shutdown) = watch::channel(true);
-        let tokens = Arc::new(AtomicU64::new(0));
-        let tokens_added = Arc::new(Notify::new());
+        let (ctx, _) = ExecutionContext::new();
         let action = || async { EmptyMetric {} };
-        let workers: Vec<JoinHandle<EmptyAggregate>> =
-            spawn_workers(n, start, shutdown, tokens, tokens_added, action).await;
+        let workers: Vec<JoinHandle<EmptyAggregate>> = spawn_workers(ctx, n, action).await;
 
         assert_eq!(workers.len(), n);
     }
