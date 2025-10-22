@@ -9,13 +9,7 @@ use crate::{aggregate::Aggregate, scenario::Scenario};
 use internals::*;
 
 use futures::future::join_all;
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 /// A stage defines a target RPS and how long to ramp to that target.
 ///
@@ -99,7 +93,7 @@ where
 pub use internals::*;
 
 mod internals {
-    use tokio::sync::watch::Sender;
+    use tokio::sync::{Semaphore, watch::Sender};
 
     use super::*;
 
@@ -107,8 +101,7 @@ mod internals {
     pub struct ExecutionContext {
         pub start: Arc<Notify>,
         pub shutdown: Receiver<bool>,
-        pub tokens: Arc<AtomicU64>,
-        pub tokens_added: Arc<Notify>,
+        pub tokens: Arc<Semaphore>,
     }
 
     impl ExecutionContext {
@@ -118,8 +111,7 @@ mod internals {
                 Self {
                     start: Arc::new(Notify::new()),
                     shutdown: rx,
-                    tokens: Arc::new(AtomicU64::new(0)),
-                    tokens_added: Arc::new(Notify::new()),
+                    tokens: Arc::new(Semaphore::new(0)),
                 },
                 tx,
             )
@@ -170,14 +162,15 @@ mod internals {
                     );
                     fractional = f;
                     if add_total > 0 {
-                        ctx.tokens
-                            .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |cur| {
-                                let new = cur.saturating_add(add_total).min(bucket_capacity);
-                                if new == cur { None } else { Some(new) }
-                            })
-                            .ok();
-
-                        ctx.tokens_added.notify_waiters();
+                        let avail = ctx.tokens.available_permits() as u64;
+                        if avail < bucket_capacity {
+                            let free_cap = bucket_capacity - avail;
+                            let add = add_total.min(free_cap) as usize;
+                            println!("{avail}:{add}");
+                            if add > 0 {
+                                ctx.tokens.add_permits(add);
+                            }
+                        }
                     }
                     tokio::time::sleep_until(next_tick).await;
                 }
@@ -239,20 +232,15 @@ mod internals {
                         let agg = agg.clone();
                         ctx.start.notified().await;
                         loop {
-                            let acquired = ctx.tokens.fetch_update(
-                                Ordering::AcqRel,
-                                Ordering::Relaxed,
-                                |cur| if cur == 0 { None } else { Some(cur - 1) },
-                            );
+                            let permit = ctx.tokens.clone().acquire_owned().await;
 
-                            match acquired {
-                                Ok(_) => {
+                            match permit {
+                                Ok(p) => {
+                                    p.forget();
                                     let metric = action().await;
                                     agg.lock().await.consume(&metric);
                                 }
-                                Err(_) => {
-                                    ctx.tokens_added.notified().await;
-                                }
+                                Err(_) => break,
                             }
                         }
                     };
