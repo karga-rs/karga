@@ -136,10 +136,10 @@ mod internals {
         let main_task = || async {
             let mut rate = 0.0;
             let mut fractional = 0.0;
+            // wait until the benchmark has started
+            ctx.start.notified().await;
 
             for stage in stages.into_iter() {
-                // wait until the benchmark has started
-                ctx.start.notified().await;
                 // instantly jump to target rate
                 // This technique make it possible to handle spikes or
                 // start at a different rate in the same api
