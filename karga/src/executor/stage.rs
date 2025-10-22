@@ -15,7 +15,6 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
-    u64,
 };
 
 /// A stage defines a target RPS and how long to ramp to that target.
@@ -67,7 +66,7 @@ where
         let governor = tokio::spawn(token_governor_task(
             ctx.clone(),
             self.stages.clone(),
-            self.tick.clone(),
+            self.tick,
             self.bucket_capacity,
         ));
 
@@ -242,6 +241,7 @@ mod internals {
                 let action = action.clone();
                 tokio::spawn(async move {
                     let agg = Arc::new(Mutex::new(A::new()));
+
                     let main_task = || async {
                         let agg = agg.clone();
                         ctx.start.notified().await;
@@ -260,6 +260,7 @@ mod internals {
                             agg.lock().await.consume(&metric);
                         }
                     };
+
                     tokio::select! {
                         _ = main_task() =>{}
                         _ = ctx.shutdown.wait_for(|b|*b) => {}
