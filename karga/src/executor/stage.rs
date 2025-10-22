@@ -170,23 +170,14 @@ mod internals {
                     );
                     fractional = f;
                     if add_total > 0 {
-                        // atomic saturating add with cas loop
-                        let mut prev = ctx.tokens.load(Ordering::Relaxed);
-                        loop {
-                            let new = prev.saturating_add(add_total).min(bucket_capacity);
-                            match ctx.tokens.compare_exchange(
-                                prev,
-                                new,
-                                Ordering::AcqRel,
-                                Ordering::Relaxed,
-                            ) {
-                                Ok(_) => {
-                                    ctx.tokens_added.notify_waiters();
-                                    break;
-                                }
-                                Err(actual) => prev = actual,
-                            }
-                        }
+                        ctx.tokens
+                            .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |cur| {
+                                let new = cur.saturating_add(add_total).min(bucket_capacity);
+                                if new == cur { None } else { Some(new) }
+                            })
+                            .ok();
+
+                        ctx.tokens_added.notify_waiters();
                     }
                     tokio::time::sleep_until(next_tick).await;
                 }
@@ -248,18 +239,21 @@ mod internals {
                         let agg = agg.clone();
                         ctx.start.notified().await;
                         loop {
-                            loop {
-                                let cur = ctx.tokens.load(Ordering::Relaxed);
-                                if cur == 0 {
-                                    ctx.tokens_added.notified().await;
-                                    continue;
+                            let acquired = ctx.tokens.fetch_update(
+                                Ordering::AcqRel,
+                                Ordering::Relaxed,
+                                |cur| if cur == 0 { None } else { Some(cur - 1) },
+                            );
+
+                            match acquired {
+                                Ok(_) => {
+                                    let metric = action().await;
+                                    agg.lock().await.consume(&metric);
                                 }
-                                if ctx.tokens.fetch_sub(1, Ordering::Relaxed) > 0 {
-                                    break;
+                                Err(_) => {
+                                    ctx.tokens_added.notified().await;
                                 }
                             }
-                            let metric = action().await;
-                            agg.lock().await.consume(&metric);
                         }
                     };
 
