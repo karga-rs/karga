@@ -149,11 +149,13 @@ mod internals {
                 }
 
                 let stage_start = Instant::now();
+                let mut next_tick = Instant::now();
                 let start_rate = rate;
                 let end_rate = stage.target;
 
                 loop {
                     let elapsed = Instant::now().duration_since(stage_start);
+                    next_tick += tick;
                     if elapsed >= stage.duration {
                         break;
                     }
@@ -186,7 +188,7 @@ mod internals {
                             }
                         }
                     }
-                    tokio::time::sleep(tick).await;
+                    tokio::time::sleep_until(next_tick).await;
                 }
                 // Just to be sure the internal rate matches the stage target
                 // so the next stage always start from the correct point and prevent
