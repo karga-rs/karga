@@ -226,35 +226,29 @@ mod internals {
                 let mut ctx = ctx.clone();
                 let action = action.clone();
                 tokio::spawn(async move {
-                    let agg = Arc::new(Mutex::new(A::new()));
+                    let mut agg = A::new();
 
-                    let main_task = || async {
-                        let agg = agg.clone();
+                    let main_task = async {
                         ctx.start.notified().await;
-                        loop {
-                            let permit = ctx.tokens.clone().acquire_owned().await;
 
-                            match permit {
-                                Ok(p) => {
-                                    p.forget();
-                                    let metric = action().await;
-                                    agg.lock().await.consume(&metric);
-                                }
+                        loop {
+                            let permit = match ctx.tokens.clone().acquire_owned().await {
+                                Ok(p) => p,
                                 Err(_) => break,
-                            }
+                            };
+                            permit.forget();
+
+                            let metric = action().await;
+                            agg.consume(&metric);
                         }
                     };
-
                     tokio::select! {
-                        _ = main_task() =>{}
+                        _ = main_task =>{}
                         _ = ctx.shutdown.wait_for(|b|*b) => {}
 
                     };
 
-                    // Shouldnt usually be a problem, if it is i fucked up really bad im sorry
-                    Arc::try_unwrap(agg)
-                        .expect("Arc::try_unwrap on aggregator failed")
-                        .into_inner()
+                    agg
                 })
             })
             .collect()
