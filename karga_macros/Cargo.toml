@@ -1,6 +1,6 @@
 [package]
 name = "karga_macros"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Degarti <outragedline@proton.me>"]
 license = "MIT"
