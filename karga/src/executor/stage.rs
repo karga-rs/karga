@@ -84,6 +84,11 @@ impl Stage {
     }
 }
 
+/// The semaphore implementation uses 3 bits of usize for flags.
+/// Any value greater than this will be capped to avoid crashing
+/// the whole thing.
+const MAX_TOKENS: usize = usize::MAX >> 3;
+
 /// Executor that drives a token-bucket governed by ramp stages and spawns worker tasks.
 ///
 /// This executor implements a token-bucket rate-limiting strategy using a
@@ -119,7 +124,7 @@ pub struct StageExecutor {
     #[builder(default = Duration::from_millis(100))]
     pub tick: Duration,
     /// The maximum number of tokens allowed in the bucket.
-    #[builder(default = usize::MAX)]
+    #[builder(default = MAX_TOKENS)]
     pub bucket_capacity: usize,
     /// The number of concurrent worker tasks to spawn.
     // 120 workers per cpu seems like a good default number
@@ -309,9 +314,20 @@ mod internals {
         let tick_rate = start_rate + (end_rate - start_rate) * t;
         // Tokens to add this tick (as a float)
         let add_f = tick_rate * tick.as_secs_f64();
-        // Convert float tokens to integer, carrying the fractional part
-        let add_total = (add_f + fractional).floor() as usize;
-        let fractional = (add_f + fractional) - (add_total as f64);
+
+        let add_total_f = (add_f + fractional).floor();
+        let fractional = (add_f + fractional) - (add_total_f);
+
+        //  Safely convert f64 to usize, saturating at the semaphore's hard limit
+        // to prevent panics.
+        let add_total = if add_total_f >= (MAX_TOKENS as f64) {
+            MAX_TOKENS
+        } else if add_total_f < 0.0 {
+            0
+        } else {
+            add_total_f as usize
+        };
+
         (add_total, fractional)
     }
 
