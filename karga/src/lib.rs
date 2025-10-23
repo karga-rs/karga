@@ -39,12 +39,11 @@
 //! use std::time::{Duration, Instant};
 //!
 //! use karga::{
+//!     aggregate::BasicAggregate,
+//!     executor::{Stage, StageExecutor},
+//!     metric::BasicMetric,
+//!     report::{BasicReport, StdoutReporter},
 //!     Reporter, Scenario,
-//!     Stage, StageExecutor,
-//! aggregate::
-//!     BasicAggregate, metric::BasicMetric,
-//! report::{
-//!     BasicReport, StdoutReporter},
 //! };
 //! use reqwest::Client;
 //!
@@ -78,12 +77,14 @@
 //!         })
 //!         .executor(
 //!             StageExecutor::builder()
-//!                 // We start with a certain RPS growing steadily,
-//!                 // then ramp up 10× faster and return to normal.
+//!                 // Define a multi-stage load profile:
 //!                 .stages(vec![
-//!                     // Using f64::MAX here means 'no rate limit'; adjust for real tests.
-//!                     Stage::new(Duration::ZERO, f64::MAX),
-//!                     Stage::new(Duration::from_secs(10), f64::MAX),
+//!                     // 1. Ramp up from 0 to 100 RPS over 10 seconds
+//!                     Stage::new(Duration::from_secs(10), 100.0),
+//!                     // 2. Hold at 100 RPS for 30 seconds
+//!                     Stage::new(Duration::from_secs(30), 100.0),
+//!                     // 3. Ramp down to 0 RPS over 5 seconds
+//!                     Stage::new(Duration::from_secs(5), 0.0),
 //!                 ])
 //!                 .build(),
 //!         )

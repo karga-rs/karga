@@ -24,8 +24,6 @@ use std::fmt::Debug;
 ///
 /// - **Preserve information:** prefer representations that allow later computation of
 ///   percentiles, rates, and error ratios without needing raw per-sample retention.
-/// - **Serializable:** implement [`Serialize`] and [`DeserializeOwned`] to permit
-///   persistence or transferring aggregates across threads or processes.
 /// - **Efficient to update & merge:** `consume` and `merge` should be optimized for
 ///   frequent updates and parallel merges.
 ///

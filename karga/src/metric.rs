@@ -11,12 +11,9 @@ use std::fmt::Debug;
 /// - **Simple and composable:** metrics should be lightweight and may be composed of other
 ///   metrics. For example, a `BasicMetric` might measure latency and success, while a more
 ///   advanced metric could embed multiple sub-metrics (network, CPU, I/O, etc.).
-/// - **Serializable:** all metrics must implement [`Serialize`] and [`DeserializeOwned`] so
-///   they can be transmitted between workers or persisted for later processing.
 /// - **Comparable:** metrics must support [`PartialEq`] and [`PartialOrd`] to enable sorting
 ///   and equality checks during analysis.
-/// - **Thread-safe and clonable:** metrics may be shared across threads, so they must be
-///   `Send`, `Sync`, and `Clone`.
+/// - **Thread-safe and clonable:** metrics must be `Send`, `Sync`, and `Clone`.
 ///
 /// ## Composition
 /// Metrics can represent anything measurable, and can include other metrics as fields to
