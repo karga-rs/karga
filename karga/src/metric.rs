@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 /// A `Metric` represents a single observed measurement produced by the system under test.
 ///
 /// Metrics are the most granular level of performance or behavioral data. They may capture
@@ -46,7 +44,7 @@ use std::fmt::Debug;
 /// the default metric type used by [`crate::aggregate::BasicAggregate`].
 pub trait Metric
 where
-    Self: PartialOrd + PartialEq + Send + Sync + Debug + Clone,
+    Self: PartialOrd + PartialEq + Send + Sync + Clone,
 {
 }
 
