@@ -395,14 +395,16 @@ mod internals {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Metric, macros::*};
+    use crate::Metric;
 
     // A simple metric for testing.
-    #[metric]
+    #[derive(Clone, PartialEq, PartialOrd)]
     struct EmptyMetric;
 
+    impl Metric for EmptyMetric {}
+
     // A simple aggregate for testing.
-    #[aggregate]
+    #[derive(Clone)]
     struct EmptyAggregate;
 
     impl Aggregate for EmptyAggregate {

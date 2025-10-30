@@ -36,12 +36,13 @@ use crate::Metric;
 ///
 /// # Example
 /// ```rust
-/// use karga::{Aggregate, Metric, macros::*};
+/// use karga::{Aggregate, Metric};
 ///
-/// #[metric]
+/// #[derive(Clone, PartialOrd, PartialEq)]
 /// struct MyMetric(u64);
+/// impl Metric for MyMetric{}
 ///
-/// #[aggregate]
+/// #[derive(Clone)]
 /// struct MyAggregate {
 ///     count: u64,
 ///     sum: u128,
@@ -118,7 +119,6 @@ mod builtins {
     use crate::metric::BasicMetric;
 
     use super::*;
-    use crate::macros::aggregate;
 
     /// The default built-in implementation of [`Aggregate`].
     ///
@@ -132,8 +132,7 @@ mod builtins {
     /// percentiles, and success ratios from this raw data without losing precision.
     ///
     /// Enabled via the `builtins` feature.
-    #[aggregate]
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     pub struct BasicAggregate {
         pub total_latency: Duration,
         pub success_count: usize,

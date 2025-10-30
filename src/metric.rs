@@ -22,15 +22,15 @@
 /// ## Example
 /// ```rust
 /// use karga::Metric;
-/// use karga::macros::metric;
 /// use std::time::Duration;
 ///
-/// #[metric]
+/// #[derive(Clone, PartialOrd, PartialEq)]
 /// struct MyMetric {
 ///     latency: Duration,
 ///     success: bool,
 ///     bytes: usize,
 /// }
+/// impl Metric for MyMetric{}
 /// ```
 ///
 /// ## Built-in metrics
@@ -53,7 +53,6 @@ pub use builtins::*;
 
 #[cfg(feature = "builtins")]
 mod builtins {
-    use crate::macros::metric;
     use std::time::Duration;
 
     use super::*;
@@ -63,7 +62,7 @@ mod builtins {
     /// `BasicMetric` is designed to cover the most common performance-measurement needs in
     /// benchmarking and load-testing scenarios. It is minimal, efficient, and serializable.
     /// Higher-level metrics can build upon it or include additional context fields as needed.
-    #[metric]
+    #[derive(Clone, PartialEq, PartialOrd)]
     pub struct BasicMetric {
         /// The duration of the operation.
         pub latency: Duration,
@@ -72,4 +71,6 @@ mod builtins {
         /// The number of bytes transferred or processed.
         pub bytes: usize,
     }
+
+    impl Metric for BasicMetric {}
 }

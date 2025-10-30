@@ -104,7 +104,6 @@
 //!
 //! # Feature flags
 //!
-//! - `macros`: enables small procedural macros that reduce boilerplate when implementing
 //!   common traits and registration. (Enabled by default)
 //! - `builtins`: provides basic implementations (`BasicMetric`, `BasicAggregate`,
 //!   `BasicReport`, `StdoutReporter`) for quick experiments and demos. (Enabled by default)
@@ -131,9 +130,3 @@ pub use executor::{Executor, Stage, StageExecutor};
 pub use metric::Metric;
 pub use report::{Report, Reporter};
 pub use scenario::Scenario;
-
-#[cfg(feature = "macros")]
-/// Procedural macros to reduce boilerplate
-pub mod macros {
-    pub use karga_macros::*;
-}
