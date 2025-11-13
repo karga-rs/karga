@@ -1,6 +1,6 @@
 //! Executor — orchestration of runtime execution and rate control
 //!
-//! The `Executor` trait is the runtime hook that executes a `Scenario`. Different
+//! The `Executor` trait is the runtime that executes a `Scenario`. Different
 //! executors provide different execution strategies: sequential, concurrent,
 //! distributed, or token-bucket-based.
 //!

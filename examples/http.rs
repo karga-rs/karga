@@ -17,11 +17,13 @@ async fn main() {
     let client = Client::new();
 
     let results: BasicAggregate = StageExecutor::builder()
-        // We start with a certain number of rps growing steady
-        // Then we grow it 10 times faster and go back to normal
         .stages(vec![
+            // Start with a ramp up from 0 to 10 over 3 seconds
             Stage::new(Duration::from_secs(3), 10.0),
+            // Increase the rate of change to go from 10 to 100 over the
+            // next 3 seconds
             Stage::new(Duration::from_secs(3), 100.0),
+            // ramp down from 100 to 10 over the next 3 sceonds
             Stage::new(Duration::from_secs(3), 10.0),
         ])
         .build()

@@ -11,8 +11,7 @@
 //!
 //! The main building blocks are:
 //!
-//! - [`Scenario`]: glue that ties everything together — defines the benchmark flow and
-//!   the action(s) being measured.
+//! - [`Scenario`]: configuration object that defines the action to be executed
 //! - [`Executor`]: responsible for actually running the scenario. Executors control
 //!   concurrency, scheduling, and are the primary place where performance matters. We provide
 //!   a high-performance `StageExecutor`, but executors are replaceable.
@@ -35,69 +34,9 @@
 //!
 //! A simple HTTP example:
 //!
-//! ```rust,no_run
-//! use std::time::{Duration, Instant};
-//!
-//! use karga::{
-//!     aggregate::BasicAggregate,
-//!     executor::{Stage, StageExecutor},
-//!     metric::BasicMetric,
-//!     report::{BasicReport, StdoutReporter},
-//!     Reporter, Scenario,
-//! };
-//! use reqwest::Client;
-//!
-//! #[tokio::main]
-//! async fn main() {
-//!     // NEVER instantiate heavy objects like clients inside the action —
-//!     // doing so would severely impact performance.
-//!     let client = Client::new();
-//!     let results: BasicAggregate = Scenario::builder()
-//!         .name("HTTP scenario")
-//!         .action(move || {
-//!             let client = client.clone();
-//!             async move {
-//!                 let start = Instant::now();
-//!
-//!                 // For this example, we’ll hardcode the request.
-//!                 let res = client.get("http://localhost:3000").send().await;
-//!                 let success = match res {
-//!                     Ok(r) => r.status() == 200,
-//!                     Err(_) => false,
-//!                 };
-//!                 let elapsed = start.elapsed();
-//!
-//!                 BasicMetric {
-//!                     latency: elapsed,
-//!                     success,
-//!                     // We don't use bytes in this example.
-//!                     bytes: 0,
-//!                 }
-//!             }
-//!         })
-//!         .executor(
-//!             StageExecutor::builder()
-//!                 // Define a multi-stage load profile:
-//!                 .stages(vec![
-//!                     // 1. Ramp up from 0 to 100 RPS over 10 seconds
-//!                     Stage::new(Duration::from_secs(10), 100.0),
-//!                     // 2. Hold at 100 RPS for 30 seconds
-//!                     Stage::new(Duration::from_secs(30), 100.0),
-//!                     // 3. Ramp down to 0 RPS over 5 seconds
-//!                     Stage::new(Duration::from_secs(5), 0.0),
-//!                 ])
-//!                 .build(),
-//!         )
-//!         .build()
-//!         .run()
-//!         .await
-//!         .unwrap();
-//!
-//!     let report = BasicReport::from(results);
-//!     // Slightly unusual syntax, but valid.
-//!     StdoutReporter {}.report(&report).await.unwrap();
-//! }
-//! ```
+//!```rust,no_run
+#![doc = include_str!("../examples/http.rs")]
+//!```
 //!
 //! This example demonstrates how Karga combines a simple scenario, a configurable executor,
 //! and built-in reporting to form a full benchmark pipeline.

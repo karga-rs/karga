@@ -1,14 +1,10 @@
-//! The [`Scenario`] struct defines the orchestration layer that ties together
-//! metrics, execution, and aggregation within Karga.
+//! The [`Scenario`] struct defines the workload definition layer of karga
 //!
 //! A *scenario* represents a complete test or benchmark definition — it specifies
-//! what to run (`action`), how to run it (`executor`), and how the results will be
-//! aggregated (`Aggregate`). While other parts of Karga are meant to be swappable
-//! (different metrics, executors, reporters, etc.), `Scenario` acts as the glue
-//! that binds them in a cohesive workflow.
+//! what to run (`action`), and how the results will be aggregated (`Aggregate`).
 //!
-//! Typically, a scenario is constructed using [`typed_builder::TypedBuilder`] and then executed via
-//! [`Scenario::run`], which delegates the actual work to the provided [`Executor`].
+//! Typically, a scenario is constructed using [`typed_builder::TypedBuilder`] and then passed
+//! down to an [`Executor`], acting as a configuration object
 //!
 //! # Example
 //! ```rust,ignore
@@ -18,24 +14,18 @@
 //! use karga::aggregate::BasicAggregate;
 //!
 //! // Build a scenario. The `action` produces a metric; the executor runs it.
-//! let mut scenario = Scenario::builder()
+//! let scenario = Scenario::builder()
 //!     .name("example")
 //!     .action(|| async {
 //!         // Simulate work and produce a metric
 //!         BasicMetric { latency: Duration::from_millis(10), success: true, bytes: 512 }
 //!     })
-//!     .executor(/* some executor implementing Executor<BasicAggregate, _, _> */)
 //!     .build();
-//!
-//! // Running the scenario returns the final aggregate.
-//! let result: BasicAggregate = scenario.run().await?;
 //! ```
 //!
 //! # Design goals
-//! - **Composability:** all major components (executor, aggregate, metric) remain generic.
+//! - **Composability:** all major components remain generic.
 //! - **Determinism:** scenarios define repeatable, isolated executions.
-//! - **Extensibility:** advanced frameworks can provide custom scenarios, but the default
-//!   implementation serves as the canonical composition model.
 //!
 //! # Notes on `action`
 //!
@@ -53,7 +43,7 @@
 //!   inside the closure (captured from the outer scope) and reuse the underlying connection
 //!   pool or socket as appropriate.
 
-use crate::{Aggregate, Executor};
+use crate::Aggregate;
 use std::marker::PhantomData;
 use typed_builder::TypedBuilder;
 
@@ -61,7 +51,6 @@ use typed_builder::TypedBuilder;
 ///
 /// `Scenario` is generic over four parameters:
 /// - `A`: the [`Aggregate`] implementation used to accumulate metrics.
-/// - `E`: the [`Executor`] responsible for managing concurrent or repeated runs.
 /// - `F`: the function type that produces the asynchronous operation.
 /// - `Fut`: the future returned by the action.
 #[derive(Debug, Clone, TypedBuilder)]
