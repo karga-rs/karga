@@ -94,7 +94,7 @@ mod builtins {
     ///
     /// This type demonstrates the intended use of reports as lightweight post-processing
     /// layers on top of aggregates.
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Deserialize, Serialize, Default)]
     pub struct BasicReport {
         pub average_latency: Duration,
         pub success_ratio: f64,
@@ -104,11 +104,15 @@ mod builtins {
 
     impl From<BasicAggregate> for BasicReport {
         fn from(value: BasicAggregate) -> Self {
-            Self {
-                average_latency: value.total_latency.div_f64(value.count as f64),
-                success_ratio: (value.success_count as f64 / value.count as f64) * 100.0,
-                total_bytes: value.total_bytes,
-                count: value.count,
+            if value.count == 0 {
+                Self::default()
+            } else {
+                Self {
+                    average_latency: value.total_latency.div_f64(value.count as f64),
+                    success_ratio: (value.success_count as f64 / value.count as f64) * 100.0,
+                    total_bytes: value.total_bytes,
+                    count: value.count,
+                }
             }
         }
     }
