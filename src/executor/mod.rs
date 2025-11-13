@@ -34,6 +34,6 @@ where
     /// results from the `scenario.action`.
     fn exec(
         &self,
-        scenario: &Scenario<A, Self, F, Fut>,
+        scenario: &Scenario<A, F, Fut>,
     ) -> impl Future<Output = Result<A, Box<dyn std::error::Error>>> + Send;
 }

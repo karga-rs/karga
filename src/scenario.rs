@@ -65,10 +65,9 @@ use typed_builder::TypedBuilder;
 /// - `F`: the function type that produces the asynchronous operation.
 /// - `Fut`: the future returned by the action.
 #[derive(Debug, Clone, TypedBuilder)]
-pub struct Scenario<A, E, F, Fut>
+pub struct Scenario<A, F, Fut>
 where
     A: Aggregate,
-    E: Executor<A, F, Fut> + Send + Sync,
     F: Fn() -> Fut + Send + Sync + Clone + 'static,
     Fut: Future<Output = A::Metric> + Send,
 {
@@ -83,27 +82,7 @@ where
     /// inside the action itself to prevent severe performance degradation.
     pub action: F,
 
-    /// The component responsible for executing the action under test.
-    pub executor: E,
-
     /// Phantom marker connecting the scenario to its aggregate type.
     #[builder(default, setter(skip))]
     aggregator: PhantomData<A>,
-}
-
-impl<A, E, F, Fut> Scenario<A, E, F, Fut>
-where
-    A: Aggregate,
-    E: Executor<A, F, Fut> + Send + Sync,
-    F: Fn() -> Fut + Send + Sync + Clone + 'static,
-    Fut: Future<Output = A::Metric> + Send,
-{
-    /// Runs the scenario by delegating execution to the configured [`Executor`].
-    ///
-    /// The executor determines how the action is performed (e.g., sequentially,
-    /// concurrently, or under rate control). Once complete, it returns the final
-    /// aggregate summarizing all collected metrics.
-    pub async fn run(&mut self) -> Result<A, Box<dyn std::error::Error>> {
-        self.executor.exec(self).await
-    }
 }

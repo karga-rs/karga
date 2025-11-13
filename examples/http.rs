@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use karga::{
-    Reporter, Scenario,
+    Executor, Reporter, Scenario,
     aggregate::BasicAggregate,
     executor::{Stage, StageExecutor},
     metric::BasicMetric,
@@ -11,40 +11,45 @@ use reqwest::Client;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt().init(); // NEVER intantiate heavy things like clients inside the action
+    tracing_subscriber::fmt().init();
+    // NEVER instantiate heavy things like clients inside the action
     // unless you want to kill performance
     let client = Client::new();
-    let results: BasicAggregate = Scenario::builder()
-        .name("Http scenario")
-        .action(move || {
-            let client = client.clone();
-            async move {
-                let start = Instant::now();
 
-                // Yeah lets hardcode it
-                let res = client.get("http://localhost:3000").send().await;
-                let success = match res {
-                    Ok(r) => r.status() == 200,
-                    Err(_) => false,
-                };
-                let elapsed = start.elapsed();
-                BasicMetric {
-                    latency: elapsed,
-                    success,
-                    // We dont care about it in this example
-                    bytes: 0,
-                }
-            }
-        })
-        .executor(
-            StageExecutor::builder()
-                // We start with a certain number of rps growing steady
-                // Then we grow it 10 times faster and go back to normal
-                .stages(vec![Stage::new(Duration::from_secs(1), 10.0)])
+    let results: BasicAggregate = StageExecutor::builder()
+        // We start with a certain number of rps growing steady
+        // Then we grow it 10 times faster and go back to normal
+        .stages(vec![
+            Stage::new(Duration::from_secs(3), 10.0),
+            Stage::new(Duration::from_secs(3), 100.0),
+            Stage::new(Duration::from_secs(3), 10.0),
+        ])
+        .build()
+        .exec(
+            &Scenario::builder()
+                .name("Http scenario")
+                .action(move || {
+                    let client = client.clone();
+                    async move {
+                        let start = Instant::now();
+
+                        // Yeah lets hardcode it
+                        let res = client.get("http://localhost:3000").send().await;
+                        let success = match res {
+                            Ok(r) => r.status() == 200,
+                            Err(_) => false,
+                        };
+                        let elapsed = start.elapsed();
+                        BasicMetric {
+                            latency: elapsed,
+                            success,
+                            // We dont care about it in this example
+                            bytes: 0,
+                        }
+                    }
+                })
                 .build(),
         )
-        .build()
-        .run()
         .await
         .unwrap();
 
