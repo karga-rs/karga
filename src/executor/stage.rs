@@ -423,53 +423,57 @@ mod tests {
         assert_eq!(workers.len(), n);
     }
 
-    #[test]
-    fn calc_token_limit_linearity() {
-        let mut end_rate = 100.;
-        let mut expected_t = 1;
-        for _ in 0..10 {
-            let (t, f) = calc_token_limit(
-                Duration::from_secs(1),
-                Duration::from_secs(10),
-                0.,
-                end_rate,
-                0.,
-                Duration::from_millis(100),
-            );
+    mod calc_token_limit {
+        use super::*;
 
-            assert_eq!(t, expected_t);
-            // as they are always powers of 10 there should never be a fractional carry
-            assert_eq!(f, 0.);
+        #[test]
+        fn linearity() {
+            let mut end_rate = 100.;
+            let mut expected_t = 1;
+            for _ in 0..10 {
+                let (t, f) = calc_token_limit(
+                    Duration::from_secs(1),
+                    Duration::from_secs(10),
+                    0.,
+                    end_rate,
+                    0.,
+                    Duration::from_millis(100),
+                );
 
-            end_rate *= 10.;
-            expected_t *= 10;
+                assert_eq!(t, expected_t);
+                // as they are always powers of 10 there should never be a fractional carry
+                assert_eq!(f, 0.);
+
+                end_rate *= 10.;
+                expected_t *= 10;
+            }
         }
-    }
 
-    #[test]
-    fn calc_token_limit_fractional_accumulation() {
-        let dur = 10;
-        let start_rate = 12.5;
-        let end_rate = 12.5;
-        let mut facc = 0.;
+        #[test]
+        fn fractional_accumulation() {
+            let dur = 10;
+            let start_rate = 12.5;
+            let end_rate = 12.5;
+            let mut facc = 0.;
 
-        let expected_fs = [0.25, 0.5, 0.75, 0.];
+            let expected_fs = [0.25, 0.5, 0.75, 0.];
 
-        for i in 0..10 {
-            let (t, f) = calc_token_limit(
-                Duration::from_secs(1),
-                Duration::from_secs(dur),
-                start_rate,
-                end_rate,
-                facc,
-                Duration::from_millis(100),
-            );
-            facc = f;
+            for i in 0..10 {
+                let (t, f) = calc_token_limit(
+                    Duration::from_secs(1),
+                    Duration::from_secs(dur),
+                    start_rate,
+                    end_rate,
+                    facc,
+                    Duration::from_millis(100),
+                );
+                facc = f;
 
-            let expected_f = expected_fs[i % 4];
-            let expected_t = if expected_f == 0. { 2 } else { 1 };
-            assert_eq!(t, expected_t);
-            assert_eq!(f, expected_f)
+                let expected_f = expected_fs[i % 4];
+                let expected_t = if expected_f == 0. { 2 } else { 1 };
+                assert_eq!(t, expected_t);
+                assert_eq!(f, expected_f)
+            }
         }
     }
 }
