@@ -503,5 +503,22 @@ mod tests {
             assert_eq!(t_end, 0);
             assert_eq!(f_end, 0.0);
         }
+
+        #[test]
+        fn hold_steady() {
+            let stage_duration = Duration::from_secs(10);
+            let tick = Duration::from_millis(100);
+            let start_rate = 100.;
+            let end_rate = start_rate;
+
+            for i in 0..10 {
+                let elapsed = Duration::from_secs(i);
+                let (t, f) =
+                    calc_token_limit(elapsed, stage_duration, start_rate, end_rate, 0.0, tick);
+                let expected_t = 10;
+                assert_eq!(t, expected_t);
+                assert_eq!(f, 0.0);
+            }
+        }
     }
 }
