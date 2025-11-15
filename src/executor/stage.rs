@@ -537,5 +537,24 @@ mod tests {
                 assert_eq!(f, 0.);
             }
         }
+
+        #[test]
+        fn elapsed_over_duartion_cap_at_end_rate() {
+            for i in 0..10 {
+                let elapsed = 10 + i;
+                let (t, f) = calc_token_limit(
+                    Duration::from_secs(elapsed),
+                    Duration::from_secs(10),
+                    0.,
+                    100.,
+                    0.,
+                    Duration::from_millis(100),
+                );
+
+                // the rate should never change get over a max (10 in this case) if elapsed over duration
+                assert_eq!(t, 10);
+                assert_eq!(f, 0.);
+            }
+        }
     }
 }
