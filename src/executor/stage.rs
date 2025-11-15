@@ -556,5 +556,21 @@ mod tests {
                 assert_eq!(f, 0.);
             }
         }
+
+        #[test]
+        fn negative_value_returns_0() {
+            let (t, f) = calc_token_limit(
+                Duration::from_secs(1),
+                Duration::from_secs(10),
+                -100.,
+                -100.,
+                0.,
+                Duration::from_millis(100),
+            );
+
+            // The function should cap negative token counts at 0
+            assert_eq!(t, 0);
+            assert_eq!(f, 0.0);
+        }
     }
 }
