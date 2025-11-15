@@ -520,5 +520,22 @@ mod tests {
                 assert_eq!(f, 0.0);
             }
         }
+
+        #[test]
+        fn ramp_up() {
+            let stage_duration = Duration::from_secs(10);
+            let tick = Duration::from_millis(100);
+            let start_rate = 0.;
+            let end_rate = 100.;
+
+            for i in 0..10 {
+                let elapsed = Duration::from_secs(i);
+                let (t, f) =
+                    calc_token_limit(elapsed, stage_duration, start_rate, end_rate, 0., tick);
+                let expected_t = (i) as usize;
+                assert_eq!(t, expected_t);
+                assert_eq!(f, 0.);
+            }
+        }
     }
 }
