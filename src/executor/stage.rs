@@ -422,4 +422,26 @@ mod tests {
 
         assert_eq!(workers.len(), n);
     }
+
+    #[test]
+    fn calc_token_limit_linearity() {
+        let mut end_rate = 100.;
+        let mut expected_t = 1;
+        for _ in 0..10 {
+            let (t, f) = calc_token_limit(
+                Duration::from_secs(1),
+                Duration::from_secs(10),
+                0.,
+                end_rate,
+                0.,
+                Duration::from_millis(100),
+            );
+
+            assert_eq!(t, expected_t);
+            assert_eq!(f, 0.);
+
+            end_rate *= 10.;
+            expected_t *= 10;
+        }
+    }
 }
