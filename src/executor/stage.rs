@@ -475,5 +475,33 @@ mod tests {
                 assert_eq!(f, expected_f)
             }
         }
+
+        #[test]
+        fn ramp_down() {
+            let stage_duration = Duration::from_secs(10);
+            let tick = Duration::from_millis(100);
+            let start_rate = 100.0;
+            let end_rate = 0.0;
+
+            for i in 0..10 {
+                let elapsed = Duration::from_secs(i);
+                let (t, f) =
+                    calc_token_limit(elapsed, stage_duration, start_rate, end_rate, 0.0, tick);
+                let expected_t = (10 - i) as usize;
+                assert_eq!(t, expected_t);
+                assert_eq!(f, 0.0);
+            }
+
+            let (t_end, f_end) = calc_token_limit(
+                stage_duration,
+                stage_duration,
+                start_rate,
+                end_rate,
+                0.0,
+                tick,
+            );
+            assert_eq!(t_end, 0);
+            assert_eq!(f_end, 0.0);
+        }
     }
 }
