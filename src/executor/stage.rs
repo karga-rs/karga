@@ -572,5 +572,20 @@ mod tests {
             assert_eq!(t, 0);
             assert_eq!(f, 0.0);
         }
+
+        #[test]
+        fn extreme_rate_cap_at_max_tokens() {
+            let (t, f) = calc_token_limit(
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                f64::MAX,
+                f64::MAX,
+                0.,
+                Duration::from_secs(1),
+            );
+
+            assert_eq!(t, MAX_TOKENS);
+            assert_eq!(f, 0.);
+        }
     }
 }
