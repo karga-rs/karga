@@ -1,7 +1,7 @@
 [package]
 name = "karga"
 version = "0.3.1"
-edition = "2024"
+edition = "2021"
 authors = ["Degarti <outragedline@proton.me>"]
 license = "MIT"
 readme = "./README.md"

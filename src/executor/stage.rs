@@ -62,7 +62,7 @@ use crate::{aggregate::Aggregate, scenario::Scenario};
 use internals::*;
 
 use futures::future::join_all;
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 /// A stage defines a target RPS and how long to ramp to that target.
 ///
@@ -186,8 +186,8 @@ pub use internals::*;
 mod internals {
     use super::*;
     use tokio::sync::{
+        watch::{channel, Receiver, Sender},
         Semaphore,
-        watch::{Receiver, Sender, channel},
     };
 
     /// Shared execution state for the governor and all worker tasks.

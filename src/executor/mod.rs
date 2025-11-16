@@ -10,6 +10,7 @@ pub mod stage;
 pub use stage::{Stage, StageExecutor};
 
 use crate::{aggregate::Aggregate, scenario::Scenario};
+use std::future::Future;
 
 /// The runtime hook that executes a `Scenario`.
 ///
