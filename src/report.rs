@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::future::Future;
 use std::{fmt::Debug, time::Duration};
 
 use crate::Aggregate;

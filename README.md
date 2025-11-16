@@ -114,8 +114,7 @@ async fn main() {
     let report = BasicReport::from(results);
     // Slightly unusual syntax, but valid.
     StdoutReporter {}.report(&report).await.unwrap();
-}
-```
+}```
 
 The real `http` example in the repo shows a tiny `reqwest`-based action that records latency and a boolean success flag — use it as a starting point and swap the body for Kafka, gRPC or other protocols.
 

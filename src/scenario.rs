@@ -44,6 +44,7 @@
 //!   pool or socket as appropriate.
 
 use crate::Aggregate;
+use std::future::Future;
 use std::marker::PhantomData;
 use typed_builder::TypedBuilder;
 
