@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant};
 
 use karga::{
-    Executor, Reporter, Scenario,
     aggregate::BasicAggregate,
     executor::{Stage, StageExecutor},
     metric::BasicMetric,
     report::{BasicReport, StdoutReporter},
+    Executor, Reporter, Scenario,
 };
 use reqwest::Client;
 

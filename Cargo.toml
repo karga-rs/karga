@@ -2,6 +2,7 @@
 name = "karga"
 version = "0.3.1"
 edition = "2021"
+rust-version = "1.75.0"
 authors = ["Degarti <outragedline@proton.me>"]
 license = "MIT"
 readme = "./README.md"
