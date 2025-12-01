@@ -26,6 +26,7 @@ async fn main() {
             // ramp down from 100 to 10 over the next 3 sceonds
             Stage::new(Duration::from_secs(3), 10.0),
         ])
+        .workers(2500)
         .build()
         .exec(
             &Scenario::builder()

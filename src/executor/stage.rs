@@ -127,8 +127,6 @@ pub struct StageExecutor {
     #[builder(default = MAX_TOKENS)]
     pub bucket_capacity: usize,
     /// The number of concurrent worker tasks to spawn.
-    // 120 workers per cpu seems like a good default number
-    #[builder(default = num_cpus::get() * 120)]
     pub workers: usize,
 }
 
