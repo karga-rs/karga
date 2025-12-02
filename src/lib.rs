@@ -30,28 +30,14 @@
 //! - Composability: users can supply their own metrics/aggregates/reporters or use the
 //!   built-ins for convenience.
 //!
-//! # Example
-//!
-//! A simple HTTP example:
-//!
-//!```rust,no_run
-#![doc = include_str!("../examples/http.rs")]
-//!```
-//!
-//! This example demonstrates how Karga combines a simple scenario, a configurable executor,
-//! and built-in reporting to form a full benchmark pipeline.
 //!
 //! # Feature flags
-//!
-//!   common traits and registration. (Enabled by default)
-//! - `builtins`: provides basic implementations (`BasicMetric`, `BasicAggregate`,
-//!   `BasicReport`, `StdoutReporter`) for quick experiments and demos. (Enabled by default)
+//! - `internals`: enable access to internal (and unstable) functions and useful implementation resources
 //!
 //! # Where to start
 //!
 //! - Read the docs for [`Scenario`], [`Executor`], and [`Reporter`]. Each core trait should
 //!   include an `# Examples` section that compiles and demonstrates a minimal implementation.
-//! - See `examples/` for runnable scenarios (recommended: `examples/http.rs`).
 
 /// Metric aggregators
 pub mod aggregate;

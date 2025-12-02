@@ -32,45 +32,8 @@
 /// }
 /// impl Metric for MyMetric{}
 /// ```
-///
-/// ## Built-in metrics
-/// When the `builtins` feature is enabled, Karga provides [`BasicMetric`], a general-purpose
-/// metric type containing:
-/// - **latency:** duration of the operation
-/// - **success:** whether the operation succeeded
-/// - **bytes:** size or payload associated with the operation
-///
-/// This metric is sufficient for most load-testing and throughput-analysis scenarios, and is
-/// the default metric type used by [`crate::aggregate::BasicAggregate`].
 pub trait Metric
 where
     Self: PartialOrd + PartialEq + Send + Sync + Clone,
 {
-}
-
-#[cfg(feature = "builtins")]
-pub use builtins::*;
-
-#[cfg(feature = "builtins")]
-mod builtins {
-    use std::time::Duration;
-
-    use super::*;
-
-    /// A built-in [`Metric`] representing a single measurement of latency, success, and byte count.
-    ///
-    /// `BasicMetric` is designed to cover the most common performance-measurement needs in
-    /// benchmarking and load-testing scenarios. It is minimal, efficient, and serializable.
-    /// Higher-level metrics can build upon it or include additional context fields as needed.
-    #[derive(Clone, PartialEq, PartialOrd)]
-    pub struct BasicMetric {
-        /// The duration of the operation.
-        pub latency: Duration,
-        /// Whether the operation succeeded.
-        pub success: bool,
-        /// The number of bytes transferred or processed.
-        pub bytes: usize,
-    }
-
-    impl Metric for BasicMetric {}
 }

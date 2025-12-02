@@ -1,6 +1,6 @@
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
+use std::fmt::Debug;
 use std::future::Future;
-use std::{fmt::Debug, time::Duration};
 
 use crate::Aggregate;
 
@@ -41,10 +41,6 @@ use crate::Aggregate;
 /// impl Report<MyAggregate> for MyReport {}
 /// ```
 ///
-/// # Feature flags
-/// - `builtins`: includes [`BasicReport`], a ready-to-use implementation derived
-///   from [`BasicAggregate`](crate::aggregate::BasicAggregate).
-///
 /// See also: [`Reporter`].
 pub trait Report<A>
 where
@@ -74,62 +70,4 @@ where
 /// ```
 pub trait Reporter<A: Aggregate, R: Report<A>> {
     fn report(&self, report: &R) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>>;
-}
-
-#[cfg(feature = "builtins")]
-pub use builtins::*;
-
-#[cfg(feature = "builtins")]
-mod builtins {
-    use crate::aggregate::BasicAggregate;
-
-    use super::*;
-
-    /// A simple built-in [`Report`] derived from [`BasicAggregate`](crate::aggregate::BasicAggregate).
-    ///
-    /// `BasicReport` summarizes key performance indicators such as:
-    /// - **average_latency:** mean operation duration
-    /// - **success_ratio:** percentage of successful operations
-    /// - **total_bytes:** total data processed
-    /// - **count:** total number of samples
-    ///
-    /// This type demonstrates the intended use of reports as lightweight post-processing
-    /// layers on top of aggregates.
-    #[derive(Debug, Deserialize, Serialize, Default)]
-    pub struct BasicReport {
-        pub average_latency: Duration,
-        pub success_ratio: f64,
-        pub total_bytes: usize,
-        pub count: usize,
-    }
-
-    impl From<BasicAggregate> for BasicReport {
-        fn from(value: BasicAggregate) -> Self {
-            if value.count == 0 {
-                Self::default()
-            } else {
-                Self {
-                    average_latency: value.total_latency.div_f64(value.count as f64),
-                    success_ratio: (value.success_count as f64 / value.count as f64) * 100.0,
-                    total_bytes: value.total_bytes,
-                    count: value.count,
-                }
-            }
-        }
-    }
-    impl Report<BasicAggregate> for BasicReport {}
-
-    /// A built-in [`Reporter`] that simply prints the formatted report to stdout.
-    ///
-    /// This implementation is useful for quick debugging or CLI tools. It demonstrates
-    /// how a reporter can consume a report and perform arbitrary output
-    /// operations.
-    pub struct StdoutReporter;
-
-    impl Reporter<BasicAggregate, BasicReport> for StdoutReporter {
-        async fn report(&self, report: &BasicReport) -> Result<(), Box<dyn std::error::Error>> {
-            println!("{report:#?}");
-            Ok(())
-        }
-    }
 }
