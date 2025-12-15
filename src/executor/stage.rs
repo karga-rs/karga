@@ -228,8 +228,9 @@ mod internals {
 
             ctx.start.notified().await;
             tracing::debug!("Governor task started.");
-
-            for stage in stages.into_iter() {
+            let j = stages.len();
+            for (i, stage) in stages.into_iter().enumerate() {
+                tracing::info!("Starting stage: {i}/{j}");
                 // Instantly jump to target rate.
                 // This allows handling spikes or starting at a non-zero rate.
                 if stage.duration.is_zero() {
@@ -275,6 +276,8 @@ mod internals {
                 // Ensure the rate for the *next* stage starts from the
                 // exact target of *this* stage, preventing rounding errors.
                 rate = end_rate;
+
+                tracing::info!("Finishing stage: {i}/{j}");
             }
         };
 
