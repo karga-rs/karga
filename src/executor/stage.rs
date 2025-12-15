@@ -162,7 +162,15 @@ where
         let aggs: Vec<A> = join_all(handles)
             .await
             .into_iter()
-            .map(|res| res.expect("Task panicked"))
+            .map(|res| match res {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Worker panicked with error: {e}");
+                    // instead of crashing, lets use return a zeroed agg
+                    // this way we dont lose all the data due to one worker panic
+                    A::new()
+                }
+            })
             .collect();
 
         tracing::info!("Processing results...");
