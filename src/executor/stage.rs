@@ -137,7 +137,8 @@ where
     F: Fn() -> Fut + Send + Sync + Clone + 'static,
     Fut: Future<Output = A::Metric> + Send,
 {
-    async fn exec(&self, scenario: &Scenario<A, F, Fut>) -> Result<A, Box<dyn std::error::Error>> {
+    type Error = Box<dyn std::error::Error>;
+    async fn exec(&self, scenario: &Scenario<A, F, Fut>) -> Result<A, Self::Error> {
         let (ctx, shutdown_tx) = ExecutionContext::new();
         tracing::info!("Spawning token governor task...");
         let governor = tokio::spawn(token_governor_task(

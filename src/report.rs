@@ -62,12 +62,14 @@ where
 /// use karga::{Reporter, Aggregate, Report};
 /// struct MyReporter;
 /// impl<A: Aggregate, R: Report<A>> Reporter<A, R> for MyReporter {
-///     async fn report(&self, report: &R) -> Result<(), Box<dyn std::error::Error>> {
+///     type Error = Box<dyn std::error::Error>;
+///     async fn report(&self, report: &R) -> Result<(), Self::Error> {
 ///         println!("{:?}", report);
 ///         Ok(())
 ///     }
 /// }
 /// ```
 pub trait Reporter<A: Aggregate, R: Report<A>> {
-    fn report(&self, report: &R) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>>;
+    type Error;
+    fn report(&self, report: &R) -> impl Future<Output = Result<(), Self::Error>>;
 }

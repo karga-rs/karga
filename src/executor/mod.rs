@@ -28,6 +28,7 @@ where
     F: Fn() -> Fut + Send + Sync + Clone + 'static,
     Fut: Future<Output = A::Metric> + Send,
 {
+    type Error;
     /// Execute the scenario and return the final aggregate.
     ///
     /// This function is responsible for implementing the execution strategy,
@@ -36,5 +37,5 @@ where
     fn exec(
         &self,
         scenario: &Scenario<A, F, Fut>,
-    ) -> impl Future<Output = Result<A, Box<dyn std::error::Error>>> + Send;
+    ) -> impl Future<Output = Result<A, Self::Error>> + Send;
 }
