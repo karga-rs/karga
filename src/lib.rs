@@ -51,7 +51,7 @@ pub mod report;
 pub mod scenario;
 
 pub use aggregate::Aggregate;
-pub use executor::{Executor, Stage, StageExecutor};
+pub use executor::{Executor, RateExecutor, Stage};
 pub use metric::Metric;
 pub use report::{Report, Reporter};
 pub use scenario::Scenario;

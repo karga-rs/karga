@@ -1,7 +1,7 @@
-//! The `StageExecutor` and its components, providing a rate-controlled,
+//! The `RateExecutor` and its components, providing a rate-controlled,
 //! stage-based execution model.
 //!
-//! The `StageExecutor` implements a token-bucket governor driven by a list of
+//! The `RateExecutor` implements a token-bucket governor driven by a list of
 //! [`Stage`]s. Each `Stage` defines a target requests-per-second (RPS) and a
 //! duration over which the governor will smoothly interpolate from the previous
 //! rate to the stage's target.
@@ -117,7 +117,7 @@ const MAX_TOKENS: usize = usize::MAX >> 3;
 /// - `workers`: Number of worker tasks. Each worker is an async task. The default
 ///   (`num_cpus * 120`) is tuned for high-throughput async I/O workloads.
 #[derive(TypedBuilder)]
-pub struct StageExecutor {
+pub struct RateExecutor {
     /// The sequence of rate-control stages to execute.
     pub stages: Vec<Stage>,
     /// The granularity of the governor's rate-control tick.
@@ -130,7 +130,7 @@ pub struct StageExecutor {
     pub workers: usize,
 }
 
-impl<A, F, Fut> Executor<A, F, Fut> for StageExecutor
+impl<A, F, Fut> Executor<A, F, Fut> for RateExecutor
 where
     Self: Send + Sync + Sized,
     A: Aggregate + 'static,
@@ -188,7 +188,7 @@ where
 #[cfg(feature = "internals")]
 pub use internals::*;
 
-/// Internal components for the `StageExecutor`.
+/// Internal components for the `RateExecutor`.
 /// Encapsulated in a module to allow conditional exposure via `#[cfg(feature = "internals")]`.
 mod internals {
     use super::*;
