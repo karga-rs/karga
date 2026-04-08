@@ -128,6 +128,9 @@ pub struct StageExecutor {
     pub bucket_capacity: usize,
     /// The number of concurrent worker tasks to spawn.
     pub workers: usize,
+    /// The bigger the batch the less contention but the less control over rate
+    #[builder(default = 1)]
+    pub batch: u32,
 }
 
 impl<A, F, Fut> Executor<A, F, Fut> for StageExecutor
@@ -139,7 +142,7 @@ where
 {
     type Error = Box<dyn std::error::Error>;
     async fn exec(&self, scenario: &Scenario<A, F, Fut>) -> Result<A, Self::Error> {
-        let (ctx, shutdown_tx) = ExecutionContext::new();
+        let (ctx, shutdown_tx) = ExecutionContext::new(self.batch);
         tracing::info!("Spawning token governor task...");
         let governor = tokio::spawn(token_governor_task(
             ctx.clone(),
@@ -207,16 +210,18 @@ mod internals {
         /// The token bucket, implemented as a semaphore.
         /// Workers acquire permits, and the governor adds them.
         pub tokens: Arc<Semaphore>,
+        pub batch: u32,
     }
 
     impl ExecutionContext {
-        pub fn new() -> (Self, Sender<bool>) {
+        pub fn new(batch: u32) -> (Self, Sender<bool>) {
             let (tx, rx) = channel(false);
             (
                 Self {
                     start: Arc::new(Notify::new()),
                     shutdown: rx,
                     tokens: Arc::new(Semaphore::new(0)),
+                    batch,
                 },
                 tx,
             )
@@ -365,7 +370,7 @@ mod internals {
                         tracing::debug!("Worker {i} started.");
 
                         loop {
-                            let permit = match ctx.tokens.clone().acquire_owned().await {
+                            let permits = match ctx.tokens.acquire_many(ctx.batch).await {
                                 Ok(p) => p,
                                 Err(_) => {
                                     tracing::debug!(
@@ -375,13 +380,15 @@ mod internals {
                                 }
                             };
 
+                            for _ in 0..permits.num_permits() {
+                                let metric = action().await;
+                                agg.consume(&metric);
+                            }
+
                             // We "forget" the permit so it's not returned to the
                             // semaphore. The governor is solely responsible for
                             // adding permits.
-                            permit.forget();
-
-                            let metric = action().await;
-                            agg.consume(&metric);
+                            permits.forget();
                         }
                     };
 
@@ -426,7 +433,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_expected_number_of_workers() {
         let n = 10;
-        let (ctx, _) = ExecutionContext::new();
+        let (ctx, _) = ExecutionContext::new(1);
         let action = || async { EmptyMetric {} };
         let workers: Vec<JoinHandle<EmptyAggregate>> = spawn_workers(ctx, n, action).await;
 
