@@ -53,16 +53,19 @@
 //! `add_total` tokens are added to the pool (saturating at `bucket_capacity`).
 //! This spreads the continuous rate into discrete request tokens while preserving
 //! the long-term average.use tokio::sync::watch::{self, Receiver};
-use tokio::time::Instant;
-use tokio::{sync::Notify, task::JoinHandle};
-use typed_builder::TypedBuilder;
-
 use super::Executor;
 use crate::{aggregate::Aggregate, scenario::Scenario};
-use internals::*;
-
 use futures::future::join_all;
 use std::{future::Future, sync::Arc, time::Duration};
+use tokio::{
+    sync::{
+        watch::{channel, Receiver, Sender},
+        Notify, Semaphore,
+    },
+    task::JoinHandle,
+    time::Instant,
+};
+use typed_builder::TypedBuilder;
 
 /// A stage defines a target RPS and how long to ramp to that target.
 ///
@@ -188,222 +191,209 @@ where
     }
 }
 
-#[cfg(feature = "internals")]
-pub use internals::*;
+/// Shared execution state for the governor and all worker tasks.
+#[derive(Clone)]
+pub struct ExecutionContext {
+    /// Broadcasts the signal to start the test.
+    pub start: Arc<Notify>,
+    /// Broadcasts the signal to stop all tasks.
+    pub shutdown: Receiver<bool>,
+    /// The token bucket, implemented as a semaphore.
+    /// Workers acquire permits, and the governor adds them.
+    pub tokens: Arc<Semaphore>,
+    pub batch: u32,
+}
 
-/// Internal components for the `StageExecutor`.
-/// Encapsulated in a module to allow conditional exposure via `#[cfg(feature = "internals")]`.
-mod internals {
-    use super::*;
-    use tokio::sync::{
-        watch::{channel, Receiver, Sender},
-        Semaphore,
+impl ExecutionContext {
+    pub fn new(batch: u32) -> (Self, Sender<bool>) {
+        let (tx, rx) = channel(false);
+        (
+            Self {
+                start: Arc::new(Notify::new()),
+                shutdown: rx,
+                tokens: Arc::new(Semaphore::new(0)),
+                batch,
+            },
+            tx,
+        )
+    }
+}
+
+/// Governor task that adds tokens to the shared semaphore
+/// according to the defined stages.
+pub async fn token_governor_task(
+    mut ctx: ExecutionContext,
+    stages: Vec<Stage>,
+    tick: Duration,
+    bucket_capacity: usize,
+) {
+    let main_task = || async {
+        let mut rate = 0.0;
+        let mut fractional = 0.0;
+
+        ctx.start.notified().await;
+        tracing::debug!("Governor task started.");
+        let j = stages.len();
+        for (i, stage) in stages.into_iter().enumerate() {
+            tracing::info!("Starting stage: {i}/{j}");
+            // Instantly jump to target rate.
+            // This allows handling spikes or starting at a non-zero rate.
+            if stage.duration.is_zero() {
+                rate = stage.target;
+                continue;
+            }
+
+            let stage_start = Instant::now();
+            let mut next_tick = Instant::now();
+            let start_rate = rate;
+            let end_rate = stage.target;
+
+            loop {
+                let elapsed = Instant::now().duration_since(stage_start);
+                if elapsed >= stage.duration {
+                    break;
+                }
+                next_tick += tick;
+
+                let (add_total, f) = calc_token_limit(
+                    elapsed,
+                    stage.duration,
+                    start_rate,
+                    end_rate,
+                    fractional,
+                    tick,
+                );
+                fractional = f;
+
+                if add_total > 0 {
+                    let avail = ctx.tokens.available_permits();
+                    if avail < bucket_capacity {
+                        // Only add tokens up to the bucket capacity
+                        let free_cap = bucket_capacity - avail;
+                        let add = add_total.min(free_cap);
+                        if add > 0 {
+                            ctx.tokens.add_permits(add);
+                        }
+                    }
+                }
+                tokio::time::sleep_until(next_tick).await;
+            }
+            // Ensure the rate for the *next* stage starts from the
+            // exact target of *this* stage, preventing rounding errors.
+            rate = end_rate;
+
+            tracing::info!("Finishing stage: {i}/{j}");
+        }
     };
 
-    /// Shared execution state for the governor and all worker tasks.
-    #[derive(Clone)]
-    pub struct ExecutionContext {
-        /// Broadcasts the signal to start the test.
-        pub start: Arc<Notify>,
-        /// Broadcasts the signal to stop all tasks.
-        pub shutdown: Receiver<bool>,
-        /// The token bucket, implemented as a semaphore.
-        /// Workers acquire permits, and the governor adds them.
-        pub tokens: Arc<Semaphore>,
-        pub batch: u32,
-    }
-
-    impl ExecutionContext {
-        pub fn new(batch: u32) -> (Self, Sender<bool>) {
-            let (tx, rx) = channel(false);
-            (
-                Self {
-                    start: Arc::new(Notify::new()),
-                    shutdown: rx,
-                    tokens: Arc::new(Semaphore::new(0)),
-                    batch,
-                },
-                tx,
-            )
+    tokio::select! {
+        _ = main_task() => {
+            tracing::debug!("Governor task finished all stages.");
         }
-    }
+        _ = ctx.shutdown.wait_for(|b|*b) => {
+            tracing::debug!("Governor received shutdown signal.");
+        }
+    };
+}
 
-    /// Governor task that adds tokens to the shared semaphore
-    /// according to the defined stages.
-    pub async fn token_governor_task(
-        mut ctx: ExecutionContext,
-        stages: Vec<Stage>,
-        tick: Duration,
-        bucket_capacity: usize,
-    ) {
-        let main_task = || async {
-            let mut rate = 0.0;
-            let mut fractional = 0.0;
+/// Pure function to calculate the number of tokens to add this tick.
+///
+/// It performs linear interpolation of the rate and carries any
+/// fractional tokens over to the next tick to maintain the long-term
+/// average rate.
+///
+/// Returns `(tokens_to_add, next_fractional_part)`.
+pub fn calc_token_limit(
+    elapsed: Duration,
+    stage_duration: Duration,
+    start_rate: f64,
+    end_rate: f64,
+    fractional: f64,
+    tick: Duration,
+) -> (usize, f64) {
+    // Interpolation factor [0.0..1.0]
+    let t = (elapsed.as_secs_f64() / stage_duration.as_secs_f64()).min(1.0);
+    // Linear interpolation of the rate
+    let tick_rate = start_rate + (end_rate - start_rate) * t;
+    // Tokens to add this tick (as a float)
+    let add_f = tick_rate * tick.as_secs_f64();
 
-            ctx.start.notified().await;
-            tracing::debug!("Governor task started.");
-            let j = stages.len();
-            for (i, stage) in stages.into_iter().enumerate() {
-                tracing::info!("Starting stage: {i}/{j}");
-                // Instantly jump to target rate.
-                // This allows handling spikes or starting at a non-zero rate.
-                if stage.duration.is_zero() {
-                    rate = stage.target;
-                    continue;
-                }
+    let add_total_f = (add_f + fractional).floor();
+    let fractional = (add_f + fractional) - (add_total_f);
 
-                let stage_start = Instant::now();
-                let mut next_tick = Instant::now();
-                let start_rate = rate;
-                let end_rate = stage.target;
+    //  Safely convert f64 to usize, saturating at the semaphore's hard limit
+    // to prevent panics.
+    let add_total = if add_total_f >= (MAX_TOKENS as f64) {
+        MAX_TOKENS
+    } else if add_total_f < 0.0 {
+        0
+    } else {
+        add_total_f as usize
+    };
 
-                loop {
-                    let elapsed = Instant::now().duration_since(stage_start);
-                    if elapsed >= stage.duration {
-                        break;
-                    }
-                    next_tick += tick;
+    (add_total, fractional)
+}
 
-                    let (add_total, f) = calc_token_limit(
-                        elapsed,
-                        stage.duration,
-                        start_rate,
-                        end_rate,
-                        fractional,
-                        tick,
-                    );
-                    fractional = f;
+/// Spawns `workers` Tokio tasks, each acting as a test worker.
+///
+/// Each worker waits for the start signal, then enters a loop to
+/// acquire tokens and execute the `action`.
+pub async fn spawn_workers<A, F, Fut>(
+    ctx: ExecutionContext,
+    workers: usize,
+    action: F,
+) -> Vec<JoinHandle<A>>
+where
+    A: Aggregate + 'static,
+    F: Fn() -> Fut + Send + Sync + Clone + 'static,
+    Fut: Future<Output = A::Metric> + Send,
+{
+    (0..workers)
+        .map(|i| {
+            let mut ctx = ctx.clone();
+            let action = action.clone();
+            tokio::spawn(async move {
+                let mut agg = A::new();
+                tracing::debug!("Worker {i} spawned.");
 
-                    if add_total > 0 {
-                        let avail = ctx.tokens.available_permits();
-                        if avail < bucket_capacity {
-                            // Only add tokens up to the bucket capacity
-                            let free_cap = bucket_capacity - avail;
-                            let add = add_total.min(free_cap);
-                            if add > 0 {
-                                ctx.tokens.add_permits(add);
+                let main_task = async {
+                    ctx.start.notified().await;
+                    tracing::debug!("Worker {i} started.");
+
+                    loop {
+                        let permits = match ctx.tokens.acquire_many(ctx.batch).await {
+                            Ok(p) => p,
+                            Err(_) => {
+                                tracing::debug!(
+                                    "Worker {i} failed to acquire token (semaphore closed).",
+                                );
+                                break;
                             }
+                        };
+
+                        for _ in 0..permits.num_permits() {
+                            let metric = action().await;
+                            agg.consume(&metric);
                         }
+
+                        // We "forget" the permit so it's not returned to the
+                        // semaphore. The governor is solely responsible for
+                        // adding permits.
+                        permits.forget();
                     }
-                    tokio::time::sleep_until(next_tick).await;
-                }
-                // Ensure the rate for the *next* stage starts from the
-                // exact target of *this* stage, preventing rounding errors.
-                rate = end_rate;
+                };
 
-                tracing::info!("Finishing stage: {i}/{j}");
-            }
-        };
+                tokio::select! {
+                    _ = main_task => {},
+                    _ = ctx.shutdown.wait_for(|b| *b) => {
+                    }
+                };
 
-        tokio::select! {
-            _ = main_task() => {
-                tracing::debug!("Governor task finished all stages.");
-            }
-            _ = ctx.shutdown.wait_for(|b|*b) => {
-                tracing::debug!("Governor received shutdown signal.");
-            }
-        };
-    }
-
-    /// Pure function to calculate the number of tokens to add this tick.
-    ///
-    /// It performs linear interpolation of the rate and carries any
-    /// fractional tokens over to the next tick to maintain the long-term
-    /// average rate.
-    ///
-    /// Returns `(tokens_to_add, next_fractional_part)`.
-    pub fn calc_token_limit(
-        elapsed: Duration,
-        stage_duration: Duration,
-        start_rate: f64,
-        end_rate: f64,
-        fractional: f64,
-        tick: Duration,
-    ) -> (usize, f64) {
-        // Interpolation factor [0.0..1.0]
-        let t = (elapsed.as_secs_f64() / stage_duration.as_secs_f64()).min(1.0);
-        // Linear interpolation of the rate
-        let tick_rate = start_rate + (end_rate - start_rate) * t;
-        // Tokens to add this tick (as a float)
-        let add_f = tick_rate * tick.as_secs_f64();
-
-        let add_total_f = (add_f + fractional).floor();
-        let fractional = (add_f + fractional) - (add_total_f);
-
-        //  Safely convert f64 to usize, saturating at the semaphore's hard limit
-        // to prevent panics.
-        let add_total = if add_total_f >= (MAX_TOKENS as f64) {
-            MAX_TOKENS
-        } else if add_total_f < 0.0 {
-            0
-        } else {
-            add_total_f as usize
-        };
-
-        (add_total, fractional)
-    }
-
-    /// Spawns `workers` Tokio tasks, each acting as a test worker.
-    ///
-    /// Each worker waits for the start signal, then enters a loop to
-    /// acquire tokens and execute the `action`.
-    pub async fn spawn_workers<A, F, Fut>(
-        ctx: ExecutionContext,
-        workers: usize,
-        action: F,
-    ) -> Vec<JoinHandle<A>>
-    where
-        A: Aggregate + 'static,
-        F: Fn() -> Fut + Send + Sync + Clone + 'static,
-        Fut: Future<Output = A::Metric> + Send,
-    {
-        (0..workers)
-            .map(|i| {
-                let mut ctx = ctx.clone();
-                let action = action.clone();
-                tokio::spawn(async move {
-                    let mut agg = A::new();
-                    tracing::debug!("Worker {i} spawned.");
-
-                    let main_task = async {
-                        ctx.start.notified().await;
-                        tracing::debug!("Worker {i} started.");
-
-                        loop {
-                            let permits = match ctx.tokens.acquire_many(ctx.batch).await {
-                                Ok(p) => p,
-                                Err(_) => {
-                                    tracing::debug!(
-                                        "Worker {i} failed to acquire token (semaphore closed).",
-                                    );
-                                    break;
-                                }
-                            };
-
-                            for _ in 0..permits.num_permits() {
-                                let metric = action().await;
-                                agg.consume(&metric);
-                            }
-
-                            // We "forget" the permit so it's not returned to the
-                            // semaphore. The governor is solely responsible for
-                            // adding permits.
-                            permits.forget();
-                        }
-                    };
-
-                    tokio::select! {
-                        _ = main_task => {},
-                        _ = ctx.shutdown.wait_for(|b| *b) => {
-                        }
-                    };
-
-                    tracing::debug!("Worker {i} shutting down.",);
-                    agg
-                })
+                tracing::debug!("Worker {i} shutting down.",);
+                agg
             })
-            .collect()
-    }
+        })
+        .collect()
 }
 
 #[cfg(test)]
