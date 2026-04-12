@@ -56,12 +56,16 @@
 use super::Executor;
 use crate::{aggregate::Aggregate, scenario::Scenario};
 use futures::future::join_all;
-use std::{future::Future, sync::Arc, time::Duration};
-use tokio::{
+use std::{
+    future::Future,
     sync::{
-        watch::{channel, Receiver, Sender},
-        Notify, Semaphore,
+        atomic::{AtomicU64, Ordering},
+        Arc,
     },
+    time::Duration,
+};
+use tokio::{
+    sync::{Notify, Semaphore},
     task::JoinHandle,
     time::Instant,
 };
@@ -91,6 +95,156 @@ impl Stage {
 /// Any value greater than this will be capped to avoid crashing
 /// the whole thing.
 const MAX_TOKENS: usize = usize::MAX >> 3;
+const NANOS_PER_SEC: f64 = 1_000_000_000.0;
+
+struct InternalStage {
+    abs_start_ns: u64,
+    abs_end_ns: u64,
+    start_rate: f64,
+    end_rate: f64,
+}
+impl InternalStage {
+    fn tokens_at(&self, now: u64) -> f64 {
+        // duration 0
+        if self.abs_start_ns == self.abs_end_ns {
+            return self.end_rate as f64;
+        };
+        let total_secs = (self.abs_end_ns - self.abs_start_ns) as f64 / NANOS_PER_SEC;
+        let slider = (now.clamp(self.abs_start_ns, self.abs_end_ns) - self.abs_start_ns) as f64
+            / NANOS_PER_SEC;
+
+        let (rend, rst) = (self.end_rate as f64, self.start_rate as f64);
+        let base_tokens = rst * slider;
+        let slope = 0.5 * (rend - rst) * (slider * slider / total_secs);
+        base_tokens + slope
+    }
+
+    fn total_area(&self) -> f64 {
+        let duration = (self.abs_end_ns - self.abs_start_ns) as f64 / 1_000_000_000.0;
+        duration * (self.start_rate + self.end_rate) / 2.0
+    }
+}
+
+struct RateLimiter {
+    tokens: Semaphore,
+    stages: Vec<InternalStage>,
+    total_duration: Duration,
+    start: Instant,
+    tokens_minted: AtomicU64,
+}
+
+impl RateLimiter {
+    fn new(stages: &[Stage]) -> Self {
+        let now = Instant::now();
+        RateLimiter {
+            tokens: Semaphore::new(0),
+            stages: Self::stages_to_internal(stages),
+            total_duration: Self::total_duration(stages),
+            start: now,
+            tokens_minted: AtomicU64::new(0),
+        }
+    }
+
+    pub async fn acquire(&self, n: u32) -> Option<u32> {
+        loop {
+            let now = Instant::now().duration_since(self.start);
+            if now > self.total_duration {
+                return None;
+            };
+
+            if let Ok(p) = self.tokens.try_acquire_many(n) {
+                p.forget();
+                return Some(n);
+            }
+
+            if !self.refill(now.as_nanos() as u64) {
+                return None;
+            };
+
+            match tokio::time::timeout(Duration::from_millis(100), self.tokens.acquire_many(n))
+                .await
+            {
+                Ok(Ok(p)) => {
+                    p.forget();
+                    return Some(n);
+                }
+                _ => continue,
+            };
+        }
+    }
+
+    fn refill(&self, now: u64) -> bool {
+        for s in &self.stages {
+            if now <= s.abs_end_ns {
+                let expected = self.total_tokens_at(now);
+                let minted = self.tokens_minted.load(Ordering::Acquire);
+                if expected as u64 > minted {
+                    let add = expected as u64 - minted;
+                    if self
+                        .tokens_minted
+                        .compare_exchange(minted, minted + add, Ordering::AcqRel, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        self.tokens.add_permits(add as usize);
+                    };
+                    return true;
+                }
+            }
+        }
+        // just to awake any waiters
+        self.tokens.close();
+        false
+    }
+
+    fn total_tokens_at(&self, now: u64) -> f64 {
+        let mut total = 0.0;
+        for stage in &self.stages {
+            if now >= stage.abs_end_ns {
+                total += stage.total_area();
+            } else if now > stage.abs_start_ns {
+                total += stage.tokens_at(now);
+                break;
+            } else {
+                break;
+            }
+        }
+        total
+    }
+
+    fn total_duration(stages: &[Stage]) -> Duration {
+        stages.iter().map(|s| s.duration).sum()
+    }
+
+    fn stages_to_internal(stages: &[Stage]) -> Vec<InternalStage> {
+        let mut internals = Vec::with_capacity(stages.len());
+        // gambiarra moment
+        let first = stages.first().unwrap_or(&Stage {
+            duration: Duration::ZERO,
+            target: 0.,
+        });
+
+        let (mut last_abs_end, mut last_rate_end) =
+            (first.duration.as_nanos() as u64, first.target);
+
+        internals.push(InternalStage {
+            abs_start_ns: 0,
+            abs_end_ns: first.duration.as_nanos() as u64,
+            start_rate: 0.,
+            end_rate: first.target,
+        });
+        for s in stages.iter().skip(1) {
+            internals.push(InternalStage {
+                abs_start_ns: last_abs_end,
+                abs_end_ns: last_abs_end + s.duration.as_nanos() as u64,
+                start_rate: last_rate_end,
+                end_rate: s.target,
+            });
+            last_abs_end += s.duration.as_nanos() as u64;
+            last_rate_end = s.target
+        }
+        internals
+    }
+}
 
 /// Executor that drives a token-bucket governed by ramp stages and spawns worker tasks.
 ///
@@ -145,25 +299,13 @@ where
 {
     type Error = Box<dyn std::error::Error>;
     async fn exec(&self, scenario: &Scenario<A, F, Fut>) -> Result<A, Self::Error> {
-        let (ctx, shutdown_tx) = ExecutionContext::new(self.batch);
-        tracing::info!("Spawning token governor task...");
-        let governor = tokio::spawn(token_governor_task(
-            ctx.clone(),
-            self.stages.clone(),
-            self.tick,
-            self.bucket_capacity,
-        ));
+        let ctx = ExecutionContext::new(self.batch, &self.stages);
 
         tracing::info!("Spawning {} workers...", self.workers);
         let handles = spawn_workers(ctx.clone(), self.workers, scenario.action.clone()).await;
 
         tracing::info!("Running scenario: {}!", scenario.name);
         ctx.start.notify_waiters();
-
-        // The governor task ending means it's all over
-        governor.await.expect("Error in token governor task");
-        tracing::info!("Governor finished, signaling shutdown...");
-        shutdown_tx.send(true)?;
 
         tracing::info!("Retrieving data from workers...");
         let aggs: Vec<A> = join_all(handles)
@@ -193,107 +335,21 @@ where
 
 /// Shared execution state for the governor and all worker tasks.
 #[derive(Clone)]
-pub struct ExecutionContext {
+struct ExecutionContext {
     /// Broadcasts the signal to start the test.
-    pub start: Arc<Notify>,
-    /// Broadcasts the signal to stop all tasks.
-    pub shutdown: Receiver<bool>,
-    /// The token bucket, implemented as a semaphore.
-    /// Workers acquire permits, and the governor adds them.
-    pub tokens: Arc<Semaphore>,
-    pub batch: u32,
+    start: Arc<Notify>,
+    tokens: Arc<RateLimiter>,
+    batch: u32,
 }
 
 impl ExecutionContext {
-    pub fn new(batch: u32) -> (Self, Sender<bool>) {
-        let (tx, rx) = channel(false);
-        (
-            Self {
-                start: Arc::new(Notify::new()),
-                shutdown: rx,
-                tokens: Arc::new(Semaphore::new(0)),
-                batch,
-            },
-            tx,
-        )
+    fn new(batch: u32, stages: &[Stage]) -> Self {
+        Self {
+            start: Arc::new(Notify::new()),
+            tokens: Arc::new(RateLimiter::new(stages)),
+            batch,
+        }
     }
-}
-
-/// Governor task that adds tokens to the shared semaphore
-/// according to the defined stages.
-pub async fn token_governor_task(
-    mut ctx: ExecutionContext,
-    stages: Vec<Stage>,
-    tick: Duration,
-    bucket_capacity: usize,
-) {
-    let main_task = || async {
-        let mut rate = 0.0;
-        let mut fractional = 0.0;
-
-        ctx.start.notified().await;
-        tracing::debug!("Governor task started.");
-        let j = stages.len();
-        for (i, stage) in stages.into_iter().enumerate() {
-            tracing::info!("Starting stage: {i}/{j}");
-            // Instantly jump to target rate.
-            // This allows handling spikes or starting at a non-zero rate.
-            if stage.duration.is_zero() {
-                rate = stage.target;
-                continue;
-            }
-
-            let stage_start = Instant::now();
-            let mut next_tick = Instant::now();
-            let start_rate = rate;
-            let end_rate = stage.target;
-
-            loop {
-                let elapsed = Instant::now().duration_since(stage_start);
-                if elapsed >= stage.duration {
-                    break;
-                }
-                next_tick += tick;
-
-                let (add_total, f) = calc_token_limit(
-                    elapsed,
-                    stage.duration,
-                    start_rate,
-                    end_rate,
-                    fractional,
-                    tick,
-                );
-                fractional = f;
-
-                if add_total > 0 {
-                    let avail = ctx.tokens.available_permits();
-                    if avail < bucket_capacity {
-                        // Only add tokens up to the bucket capacity
-                        let free_cap = bucket_capacity - avail;
-                        let add = add_total.min(free_cap);
-                        if add > 0 {
-                            ctx.tokens.add_permits(add);
-                        }
-                    }
-                }
-                tokio::time::sleep_until(next_tick).await;
-            }
-            // Ensure the rate for the *next* stage starts from the
-            // exact target of *this* stage, preventing rounding errors.
-            rate = end_rate;
-
-            tracing::info!("Finishing stage: {i}/{j}");
-        }
-    };
-
-    tokio::select! {
-        _ = main_task() => {
-            tracing::debug!("Governor task finished all stages.");
-        }
-        _ = ctx.shutdown.wait_for(|b|*b) => {
-            tracing::debug!("Governor received shutdown signal.");
-        }
-    };
 }
 
 /// Pure function to calculate the number of tokens to add this tick.
@@ -303,42 +359,11 @@ pub async fn token_governor_task(
 /// average rate.
 ///
 /// Returns `(tokens_to_add, next_fractional_part)`.
-pub fn calc_token_limit(
-    elapsed: Duration,
-    stage_duration: Duration,
-    start_rate: f64,
-    end_rate: f64,
-    fractional: f64,
-    tick: Duration,
-) -> (usize, f64) {
-    // Interpolation factor [0.0..1.0]
-    let t = (elapsed.as_secs_f64() / stage_duration.as_secs_f64()).min(1.0);
-    // Linear interpolation of the rate
-    let tick_rate = start_rate + (end_rate - start_rate) * t;
-    // Tokens to add this tick (as a float)
-    let add_f = tick_rate * tick.as_secs_f64();
-
-    let add_total_f = (add_f + fractional).floor();
-    let fractional = (add_f + fractional) - (add_total_f);
-
-    //  Safely convert f64 to usize, saturating at the semaphore's hard limit
-    // to prevent panics.
-    let add_total = if add_total_f >= (MAX_TOKENS as f64) {
-        MAX_TOKENS
-    } else if add_total_f < 0.0 {
-        0
-    } else {
-        add_total_f as usize
-    };
-
-    (add_total, fractional)
-}
-
 /// Spawns `workers` Tokio tasks, each acting as a test worker.
 ///
 /// Each worker waits for the start signal, then enters a loop to
 /// acquire tokens and execute the `action`.
-pub async fn spawn_workers<A, F, Fut>(
+async fn spawn_workers<A, F, Fut>(
     ctx: ExecutionContext,
     workers: usize,
     action: F,
@@ -350,44 +375,31 @@ where
 {
     (0..workers)
         .map(|i| {
-            let mut ctx = ctx.clone();
+            let ctx = ctx.clone();
             let action = action.clone();
             tokio::spawn(async move {
                 let mut agg = A::new();
                 tracing::debug!("Worker {i} spawned.");
 
-                let main_task = async {
-                    ctx.start.notified().await;
-                    tracing::debug!("Worker {i} started.");
+                ctx.start.notified().await;
+                tracing::debug!("Worker {i} started.");
 
-                    loop {
-                        let permits = match ctx.tokens.acquire_many(ctx.batch).await {
-                            Ok(p) => p,
-                            Err(_) => {
-                                tracing::debug!(
-                                    "Worker {i} failed to acquire token (semaphore closed).",
-                                );
-                                break;
-                            }
-                        };
-
-                        for _ in 0..permits.num_permits() {
-                            let metric = action().await;
-                            agg.consume(&metric);
+                loop {
+                    let permits = match ctx.tokens.acquire(ctx.batch).await {
+                        Some(p) => p,
+                        None => {
+                            tracing::debug!(
+                                "Worker {i} failed to acquire token (semaphore closed).",
+                            );
+                            break;
                         }
+                    };
 
-                        // We "forget" the permit so it's not returned to the
-                        // semaphore. The governor is solely responsible for
-                        // adding permits.
-                        permits.forget();
+                    for _ in 0..permits {
+                        let metric = action().await;
+                        agg.consume(&metric);
                     }
-                };
-
-                tokio::select! {
-                    _ = main_task => {},
-                    _ = ctx.shutdown.wait_for(|b| *b) => {
-                    }
-                };
+                }
 
                 tracing::debug!("Worker {i} shutting down.",);
                 agg
