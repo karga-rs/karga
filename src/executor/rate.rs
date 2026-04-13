@@ -120,8 +120,7 @@ impl InternalStage {
     }
 
     fn total_area(&self) -> f64 {
-        let duration = (self.abs_end_ns - self.abs_start_ns) as f64 / 1_000_000_000.0;
-        duration * (self.start_rate + self.end_rate) / 2.0
+        self.tokens_at(self.abs_end_ns)
     }
 }
 
