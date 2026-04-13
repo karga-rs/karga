@@ -21,11 +21,7 @@ use std::{
     time::Duration,
 };
 
-use tokio::{
-    sync::{Notify, Semaphore},
-    task::JoinHandle,
-    time::Instant,
-};
+use tokio::{sync::Semaphore, task::JoinHandle, time::Instant};
 use typed_builder::TypedBuilder;
 
 /// A stage defines a target RPS and how long to ramp to that target.
@@ -218,13 +214,12 @@ where
 {
     type Error = Box<dyn std::error::Error>;
     async fn exec(&self, scenario: &Scenario<A, F, Fut>) -> Result<A, Self::Error> {
-        let ctx = ExecutionContext::new(&self.stages);
+        let rlt = Arc::new(RateLimiter::new(&self.stages));
 
         tracing::info!("Spawning {} workers...", self.workers);
-        let handles = spawn_workers(ctx.clone(), self.workers, scenario.action.clone()).await;
+        let handles = spawn_workers(rlt.clone(), self.workers, scenario.action.clone()).await;
 
         tracing::info!("Running scenario: {}!", scenario.name);
-        ctx.start.notify_waiters();
 
         tracing::info!("Retrieving data from workers...");
         let aggs: Vec<A> = join_all(handles)
@@ -252,29 +247,12 @@ where
     }
 }
 
-/// Shared execution state for the rate-limiter and all worker tasks.
-#[derive(Clone)]
-struct ExecutionContext {
-    /// Broadcasts the signal to start the test.
-    start: Arc<Notify>,
-    tokens: Arc<RateLimiter>,
-}
-
-impl ExecutionContext {
-    fn new(stages: &[Stage]) -> Self {
-        Self {
-            start: Arc::new(Notify::new()),
-            tokens: Arc::new(RateLimiter::new(stages)),
-        }
-    }
-}
-
 /// Spawns `workers` Tokio tasks, each acting as a test worker.
 ///
 /// Each worker waits for the start signal, then enters a loop to
 /// acquire tokens and execute the `action`.
 async fn spawn_workers<A, F, Fut>(
-    ctx: ExecutionContext,
+    rlt: Arc<RateLimiter>,
     workers: usize,
     action: F,
 ) -> Vec<JoinHandle<A>>
@@ -285,17 +263,13 @@ where
 {
     (0..workers)
         .map(|i| {
-            let ctx = ctx.clone();
+            let rlt = rlt.clone();
             let action = action.clone();
             tokio::spawn(async move {
                 let mut agg = A::new();
                 tracing::debug!("Worker {i} spawned.");
-
-                ctx.start.notified().await;
-                tracing::debug!("Worker {i} started.");
-
                 loop {
-                    let permits = match ctx.tokens.acquire().await {
+                    let permits = match rlt.acquire().await {
                         Some(p) => p,
                         None => {
                             tracing::debug!(
