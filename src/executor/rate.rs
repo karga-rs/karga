@@ -149,6 +149,7 @@ impl RateLimiter {
         loop {
             let now = Instant::now().duration_since(self.start);
             if now > self.total_duration {
+                self.tokens.close();
                 return None;
             };
 
@@ -157,10 +158,7 @@ impl RateLimiter {
                 return Some(n);
             }
 
-            if !self.refill(now.as_nanos() as u64) {
-                return None;
-            };
-
+            self.refill(now.as_nanos() as u64);
             match tokio::time::timeout(Duration::from_millis(100), self.tokens.acquire_many(n))
                 .await
             {
@@ -173,27 +171,19 @@ impl RateLimiter {
         }
     }
 
-    fn refill(&self, now: u64) -> bool {
-        for s in &self.stages {
-            if now <= s.abs_end_ns {
-                let expected = self.total_tokens_at(now);
-                let minted = self.tokens_minted.load(Ordering::Acquire);
-                if expected as u64 > minted {
-                    let add = expected as u64 - minted;
-                    if self
-                        .tokens_minted
-                        .compare_exchange(minted, minted + add, Ordering::AcqRel, Ordering::Relaxed)
-                        .is_ok()
-                    {
-                        self.tokens.add_permits(add as usize);
-                    };
-                    return true;
-                }
-            }
-        }
-        // just to awake any waiters
-        self.tokens.close();
-        false
+    fn refill(&self, now: u64) {
+        let expected = self.total_tokens_at(now);
+        let minted = self.tokens_minted.load(Ordering::Acquire);
+        if expected as u64 > minted {
+            let add = expected as u64 - minted;
+            if self
+                .tokens_minted
+                .compare_exchange(minted, minted + add, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                self.tokens.add_permits(add as usize);
+            };
+        };
     }
 
     fn total_tokens_at(&self, now: u64) -> f64 {
