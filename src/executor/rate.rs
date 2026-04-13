@@ -362,5 +362,83 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Metric;
+
+    mod internal_stage {
+        const TDUR: u64 = 10 * NANOS_PER_SEC as u64;
+        macro_rules! abcd {
+            ($s:ident) => {
+                (
+                    $s.tokens_at(NANOS_PER_SEC as u64),
+                    $s.tokens_at(2 * NANOS_PER_SEC as u64),
+                    $s.tokens_at(5 * NANOS_PER_SEC as u64),
+                    $s.tokens_at(10 * NANOS_PER_SEC as u64),
+                )
+            };
+        }
+
+        use super::*;
+        #[test]
+        fn ramp_down() {
+            let start_rate = 100.;
+            let end_rate = 0.;
+            let s = InternalStage {
+                abs_start_ns: 0,
+                abs_end_ns: TDUR,
+                start_rate,
+                end_rate,
+            };
+            let (a, b, c, d) = abcd!(s);
+            // according
+            assert_eq!(a, 95.);
+            assert_eq!(b, 180.);
+            assert_eq!(c, 375.);
+            assert_eq!(d, 500.);
+        }
+        #[test]
+        fn hold_steady() {
+            let start_rate = 100.;
+            let end_rate = 100.;
+            let s = InternalStage {
+                abs_start_ns: 0,
+                abs_end_ns: TDUR,
+                start_rate,
+                end_rate,
+            };
+            let (a, b, c, d) = abcd!(s);
+            assert_eq!(a, 100.);
+            assert_eq!(b, 200.);
+            assert_eq!(c, 500.);
+            assert_eq!(d, 1000.)
+        }
+
+        #[test]
+        fn ramp_up() {
+            let start_rate = 0.;
+            let end_rate = 100.;
+            let s = InternalStage {
+                abs_start_ns: 0,
+                abs_end_ns: 10 * NANOS_PER_SEC as u64,
+                start_rate,
+                end_rate,
+            };
+
+            let (a, b, c, d) = abcd!(s);
+            assert_eq!(a, 5.);
+            assert_eq!(b, 20.);
+            assert_eq!(c, 125.);
+            assert_eq!(d, 500.)
+        }
+
+        #[test]
+        fn instant_jump() {
+            let s = InternalStage {
+                abs_start_ns: 0,
+                abs_end_ns: 0,
+                start_rate: 0.,
+                end_rate: 1000.,
+            };
+            let tokens = s.tokens_at(0);
+            assert_eq!(tokens, s.end_rate)
+        }
+    }
 }
