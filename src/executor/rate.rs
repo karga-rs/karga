@@ -154,7 +154,7 @@ impl RateLimiter {
                 .compare_exchange(minted, minted + add, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
-                self.tokens.add_permits(add as usize);
+                self.tokens.add_permits(MAX_TOKENS.min(add as usize));
             };
         };
     }
