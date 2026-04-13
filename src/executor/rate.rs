@@ -205,22 +205,8 @@ impl RateLimiter {
 
     fn stages_to_internal(stages: &[Stage]) -> Vec<InternalStage> {
         let mut internals = Vec::with_capacity(stages.len());
-        // gambiarra moment
-        let first = stages.first().unwrap_or(&Stage {
-            duration: Duration::ZERO,
-            target: 0.,
-        });
-
-        let (mut last_abs_end, mut last_rate_end) =
-            (first.duration.as_nanos() as u64, first.target);
-
-        internals.push(InternalStage {
-            abs_start_ns: 0,
-            abs_end_ns: first.duration.as_nanos() as u64,
-            start_rate: 0.,
-            end_rate: first.target,
-        });
-        for s in stages.iter().skip(1) {
+        let (mut last_abs_end, mut last_rate_end) = (0, 0.);
+        for s in stages.iter() {
             internals.push(InternalStage {
                 abs_start_ns: last_abs_end,
                 abs_end_ns: last_abs_end + s.duration.as_nanos() as u64,
