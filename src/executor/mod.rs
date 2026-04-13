@@ -7,7 +7,7 @@
 //! Karga provides a built-in [`StageExecutor`] which uses a token-bucket governor
 //! driven by a list of [`Stage`]s to control the request rate.
 pub mod rate;
-pub use rate::{Stage, StageExecutor};
+pub use rate::{RateExecutor, Stage};
 
 use crate::{aggregate::Aggregate, scenario::Scenario};
 use std::future::Future;

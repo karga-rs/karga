@@ -94,6 +94,7 @@ impl Stage {
 /// The semaphore implementation uses 3 bits of usize for flags.
 /// Any value greater than this will be capped to avoid crashing
 /// the whole thing.
+#[allow(dead_code)]
 const MAX_TOKENS: usize = usize::MAX >> 3;
 const NANOS_PER_SEC: f64 = 1_000_000_000.0;
 
@@ -243,14 +244,14 @@ impl RateLimiter {
 /// - Once a permit is acquired, the worker "forgets" it (preventing it from being
 ///   returned) and executes the `action`.
 #[derive(TypedBuilder)]
-pub struct StageExecutor {
+pub struct RateExecutor {
     /// The sequence of rate-control stages to execute.
     pub stages: Vec<Stage>,
     /// The number of concurrent worker tasks to spawn.
     pub workers: usize,
 }
 
-impl<A, F, Fut> Executor<A, F, Fut> for StageExecutor
+impl<A, F, Fut> Executor<A, F, Fut> for RateExecutor
 where
     Self: Send + Sync + Sized,
     A: Aggregate + 'static,
