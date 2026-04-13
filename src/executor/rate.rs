@@ -1,58 +1,14 @@
-//! The `StageExecutor` and its components, providing a rate-controlled,
+//! The `RateExecutor` and its components, providing a high-precision,
 //! stage-based execution model.
 //!
-//! The `StageExecutor` implements a token-bucket governor driven by a list of
-//! [`Stage`]s. Each `Stage` defines a target requests-per-second (RPS) and a
-//! duration over which the governor will smoothly interpolate from the previous
-//! rate to the stage's target.
+//! The `RateExecutor` implements a token-bucket strategy based on the
+//! mathematical integral of the RPS curve defined by a list of [`Stage`]s.
+//! Each `Stage` defines a target requests-per-second (RPS) and a duration,
+//! and the executor smoothly interpolates the rate between stages.
 //!
-//! This design separates **rate generation** (governor task) from **work
-//! execution** (worker tasks) and keeps the hot-path in workers focused on
-//! calling the user's `action`.
-//!
-//! # High-level flow
-//! 1. A shared execution context is created, holding shared state for startup
-//!    and shutdown coordination.
-//! 2. A "token pool" (implemented via `tokio::sync::Semaphore`) is created to
-//!    manage the number of available requests.
-//! 3. The governor task is spawned. It adds tokens to this pool periodically
-//!    based on the defined `Stage`s.
-//! 4. N worker tasks are spawned. Each worker repeatedly:
-//!    - waits for the start signal,
-//!    - tries to acquire a token from the pool,
-//!    - when a token is acquired, calls the `action()` future to produce a
-//!      `Metric`, and consumes it into a worker-local `Aggregate`.
-//! 5. When the governor finishes all stages, it signals shutdown. The executor
-//!    collects aggregates from all workers, merging them to produce the final
-//!    result.
-//!
-//! # Tuning knobs
-//! - `tick` (Duration): Granularity of governor updates. Smaller ticks reduce
-//!   quantization error but cause more wakeups and overhead. Typical: 10–200ms.
-//! - `bucket_capacity` (u64): Maximum stored tokens for absorbing bursts.
-//! - `workers` (usize): Number of worker tasks. Default is `num_cpus * 120`.
-//!
-//! # Mathematical behavior of the governor
-//! For a given stage with `start_rate` (previous rate) and `end_rate`
-//! (stage.target) over `duration`, at time `elapsed` the instantaneous rate `r(t)`
-//! is computed by linear interpolation:
-//!
-//! ```text
-//! t = elapsed / duration
-//! r(t) = start_rate + (end_rate - start_rate) * t
-//! ```
-//!
-//! The governor then computes how many tokens to add in a `tick`:
-//!
-//! ```text
-//! add_f = r(t) * tick_seconds
-//! add_total = floor(add_f + fractional)
-//! fractional = (add_f + fractional) - add_total
-//! ```
-//!
-//! `add_total` tokens are added to the pool (saturating at `bucket_capacity`).
-//! This spreads the continuous rate into discrete request tokens while preserving
-//! the long-term average.use tokio::sync::watch::{self, Receiver};
+//! This executor presents high-performance with **zero drift** while being
+//! completely **lock-free**
+
 use super::Executor;
 use crate::{aggregate::Aggregate, scenario::Scenario};
 use futures::future::join_all;
@@ -64,6 +20,7 @@ use std::{
     },
     time::Duration,
 };
+
 use tokio::{
     sync::{Notify, Semaphore},
     task::JoinHandle,
@@ -76,8 +33,6 @@ use typed_builder::TypedBuilder;
 /// Use `Stage::new(Duration::from_secs(10), 100.0)` to ramp to 100 RPS over 10s.
 /// If `duration` is `Duration::ZERO`, the executor will jump to the `target`
 /// RPS instantly.
-///
-/// Note: a stage with Duration::ZERO **only** updates the governor's instantaneous rate for subsequent stages; it does not itself add tokens. If you want to sustain a rate, use a stage with non-zero duration.
 #[derive(Clone, Copy, Debug)]
 pub struct Stage {
     pub duration: Duration,
@@ -94,19 +49,28 @@ impl Stage {
 /// The semaphore implementation uses 3 bits of usize for flags.
 /// Any value greater than this will be capped to avoid crashing
 /// the whole thing.
-#[allow(dead_code)]
 const MAX_TOKENS: usize = usize::MAX >> 3;
 const NANOS_PER_SEC: f64 = 1_000_000_000.0;
 
+/// A pre-calculated representation of a rate-limiting stage for fast lookup
 struct InternalStage {
     abs_start_ns: u64,
     abs_end_ns: u64,
     start_rate: f64,
     end_rate: f64,
 }
+
 impl InternalStage {
+    // Here is where the magic happens
+    // it is basically an integral, it says the ammount of tokens that there should be
+    // at any point in time
+    //
+    // It is an integral, so it only calculates the area under the curve
+    // not the ammount of tokens that should be added or the rate of change, which
+    // simplifies its logic
     fn tokens_at(&self, now: u64) -> f64 {
-        // duration 0
+        // we use stages with 0 duration to simulate spikes so its a special case
+        // bypassing the math
         if self.abs_start_ns == self.abs_end_ns {
             return self.end_rate;
         };
@@ -125,11 +89,17 @@ impl InternalStage {
     }
 }
 
+/// The [`RateLimiter`] is responsible for controlling the minting of tokens
+/// which workers depend on to peform any work, handling of batches and burst control
+///
+/// It is **lock-free** and works on the **pull model**
 struct RateLimiter {
     tokens: Semaphore,
     stages: Vec<InternalStage>,
     total_duration: Duration,
     start: Instant,
+    /// Marks how many tokens were minted up to this point
+    /// combined with tokens_at we can get how many tokens must be added to fill the gap
     tokens_minted: AtomicU64,
 }
 
@@ -169,10 +139,15 @@ impl RateLimiter {
         }
     }
 
+    // the refilling currently works based on the assumption that no matters who
+    // succeeds in refilling the bucket and at which time, it will always be following
+    // the integral at that point in time, and any imprecisions will be accounted for
+    // in the next refill
     fn refill(&self, now: u64) {
         let expected = self.total_tokens_at(now);
         let minted = self.tokens_minted.load(Ordering::Acquire);
         if expected as u64 > minted {
+            // fill the gap between the math and reality
             let add = expected as u64 - minted;
             if self
                 .tokens_minted
@@ -220,15 +195,12 @@ impl RateLimiter {
     }
 }
 
-/// Executor that drives a token-bucket governed by ramp stages and spawns worker tasks.
+/// Executor that drives a high-precision, integral-based rate control system.
 ///
-/// This executor implements a token-bucket rate-limiting strategy using a
-/// [`tokio::sync::Semaphore`].
+/// The `RateExecutor` uses a mathematical integral of the RPS curve to ensure
+/// nanosecond-perfect rate adherence across any number of stages.
 ///
-/// - A pool of `workers` tasks is spawned. Each worker asynchronously waits to
-///   acquire a permit from the semaphore.
-/// - Once a permit is acquired, the worker "forgets" it (preventing it from being
-///   returned) and executes the `action`.
+/// It utilizes a **Passive/Lazy Refill**, **lock-free** and **blazingly fast** model
 #[derive(TypedBuilder)]
 pub struct RateExecutor {
     /// The sequence of rate-control stages to execute.
@@ -280,7 +252,7 @@ where
     }
 }
 
-/// Shared execution state for the governor and all worker tasks.
+/// Shared execution state for the rate-limiter and all worker tasks.
 #[derive(Clone)]
 struct ExecutionContext {
     /// Broadcasts the signal to start the test.
