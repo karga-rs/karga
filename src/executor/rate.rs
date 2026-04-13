@@ -145,7 +145,7 @@ impl RateLimiter {
         }
     }
 
-    pub async fn acquire(&self, n: u32) -> Option<u32> {
+    pub async fn acquire(&self) -> Option<u32> {
         loop {
             let now = Instant::now().duration_since(self.start);
             if now > self.total_duration {
@@ -153,18 +153,16 @@ impl RateLimiter {
                 return None;
             };
 
-            if let Ok(p) = self.tokens.try_acquire_many(n) {
+            if let Ok(p) = self.tokens.try_acquire() {
                 p.forget();
-                return Some(n);
+                return Some(1);
             }
 
             self.refill(now.as_nanos() as u64);
-            match tokio::time::timeout(Duration::from_millis(100), self.tokens.acquire_many(n))
-                .await
-            {
+            match tokio::time::timeout(Duration::from_millis(100), self.tokens.acquire()).await {
                 Ok(Ok(p)) => {
                     p.forget();
-                    return Some(n);
+                    return Some(1);
                 }
                 _ => continue,
             };
@@ -241,43 +239,16 @@ impl RateLimiter {
 /// This executor implements a token-bucket rate-limiting strategy using a
 /// [`tokio::sync::Semaphore`].
 ///
-/// - A central "governor" task (`token_governor_task`) runs in the background, adding
-///   permits (tokens) to the semaphore at a rate determined by the defined `stages`.
-/// - The governor ticks every `tick` duration, calculating the correct number of tokens
-///   to add based on a linear interpolation between the previous stage's rate and the
-///   current one.
 /// - A pool of `workers` tasks is spawned. Each worker asynchronously waits to
 ///   acquire a permit from the semaphore.
 /// - Once a permit is acquired, the worker "forgets" it (preventing it from being
 ///   returned) and executes the `action`.
-/// - `bucket_capacity` bounds the maximum number of permits that can be "saved up" in
-///   the semaphore, allowing for controlled bursts.
-///
-/// # Tuning Knobs
-///
-/// - `tick`: Granularity of governor updates. Smaller ticks (e.g., 10ms) provide
-///   smoother rate control but increase scheduler overhead. Larger ticks
-///   (e.g., 200ms) are more coarse.
-/// - `bucket_capacity`: Maximum stored tokens for absorbing bursts. `usize::MAX`
-///   (default) effectively means an unlimited bucket. A smaller capacity
-///   enforces a stricter rate limit.
-/// - `workers`: Number of worker tasks. Each worker is an async task. The default
-///   (`num_cpus * 120`) is tuned for high-throughput async I/O workloads.
 #[derive(TypedBuilder)]
 pub struct StageExecutor {
     /// The sequence of rate-control stages to execute.
     pub stages: Vec<Stage>,
-    /// The granularity of the governor's rate-control tick.
-    #[builder(default = Duration::from_millis(100))]
-    pub tick: Duration,
-    /// The maximum number of tokens allowed in the bucket.
-    #[builder(default = MAX_TOKENS)]
-    pub bucket_capacity: usize,
     /// The number of concurrent worker tasks to spawn.
     pub workers: usize,
-    /// The bigger the batch the less contention but the less control over rate
-    #[builder(default = 1)]
-    pub batch: u32,
 }
 
 impl<A, F, Fut> Executor<A, F, Fut> for StageExecutor
@@ -289,7 +260,7 @@ where
 {
     type Error = Box<dyn std::error::Error>;
     async fn exec(&self, scenario: &Scenario<A, F, Fut>) -> Result<A, Self::Error> {
-        let ctx = ExecutionContext::new(self.batch, &self.stages);
+        let ctx = ExecutionContext::new(&self.stages);
 
         tracing::info!("Spawning {} workers...", self.workers);
         let handles = spawn_workers(ctx.clone(), self.workers, scenario.action.clone()).await;
@@ -329,26 +300,17 @@ struct ExecutionContext {
     /// Broadcasts the signal to start the test.
     start: Arc<Notify>,
     tokens: Arc<RateLimiter>,
-    batch: u32,
 }
 
 impl ExecutionContext {
-    fn new(batch: u32, stages: &[Stage]) -> Self {
+    fn new(stages: &[Stage]) -> Self {
         Self {
             start: Arc::new(Notify::new()),
             tokens: Arc::new(RateLimiter::new(stages)),
-            batch,
         }
     }
 }
 
-/// Pure function to calculate the number of tokens to add this tick.
-///
-/// It performs linear interpolation of the rate and carries any
-/// fractional tokens over to the next tick to maintain the long-term
-/// average rate.
-///
-/// Returns `(tokens_to_add, next_fractional_part)`.
 /// Spawns `workers` Tokio tasks, each acting as a test worker.
 ///
 /// Each worker waits for the start signal, then enters a loop to
@@ -375,7 +337,7 @@ where
                 tracing::debug!("Worker {i} started.");
 
                 loop {
-                    let permits = match ctx.tokens.acquire(ctx.batch).await {
+                    let permits = match ctx.tokens.acquire().await {
                         Some(p) => p,
                         None => {
                             tracing::debug!(
@@ -402,199 +364,4 @@ where
 mod tests {
     use super::*;
     use crate::Metric;
-
-    // A simple metric for testing.
-    #[derive(Clone, PartialEq, PartialOrd)]
-    struct EmptyMetric;
-
-    impl Metric for EmptyMetric {}
-
-    // A simple aggregate for testing.
-    #[derive(Clone)]
-    struct EmptyAggregate;
-
-    impl Aggregate for EmptyAggregate {
-        type Metric = EmptyMetric;
-        fn new() -> Self {
-            Self {}
-        }
-        fn consume(&mut self, _: &Self::Metric) {}
-        fn merge(&mut self, _: Self) {}
-    }
-
-    #[tokio::test]
-    async fn spawn_expected_number_of_workers() {
-        let n = 10;
-        let (ctx, _) = ExecutionContext::new(1);
-        let action = || async { EmptyMetric {} };
-        let workers: Vec<JoinHandle<EmptyAggregate>> = spawn_workers(ctx, n, action).await;
-
-        assert_eq!(workers.len(), n);
-    }
-
-    mod calc_token_limit {
-        use super::*;
-
-        #[test]
-        fn linearity() {
-            let mut end_rate = 100.;
-            let mut expected_t = 1;
-            for _ in 0..10 {
-                let (t, f) = calc_token_limit(
-                    Duration::from_secs(1),
-                    Duration::from_secs(10),
-                    0.,
-                    end_rate,
-                    0.,
-                    Duration::from_millis(100),
-                );
-
-                assert_eq!(t, expected_t);
-                // as they are always powers of 10 there should never be a fractional carry
-                assert_eq!(f, 0.);
-
-                end_rate *= 10.;
-                expected_t *= 10;
-            }
-        }
-
-        #[test]
-        fn fractional_accumulation() {
-            let dur = 10;
-            let start_rate = 12.5;
-            let end_rate = 12.5;
-            let mut facc = 0.;
-
-            let expected_fs = [0.25, 0.5, 0.75, 0.];
-
-            for i in 0..10 {
-                let (t, f) = calc_token_limit(
-                    Duration::from_secs(1),
-                    Duration::from_secs(dur),
-                    start_rate,
-                    end_rate,
-                    facc,
-                    Duration::from_millis(100),
-                );
-                facc = f;
-
-                let expected_f = expected_fs[i % 4];
-                let expected_t = if expected_f == 0. { 2 } else { 1 };
-                assert_eq!(t, expected_t);
-                assert_eq!(f, expected_f)
-            }
-        }
-
-        #[test]
-        fn ramp_down() {
-            let stage_duration = Duration::from_secs(10);
-            let tick = Duration::from_millis(100);
-            let start_rate = 100.0;
-            let end_rate = 0.0;
-
-            for i in 0..10 {
-                let elapsed = Duration::from_secs(i);
-                let (t, f) =
-                    calc_token_limit(elapsed, stage_duration, start_rate, end_rate, 0.0, tick);
-                let expected_t = (10 - i) as usize;
-                assert_eq!(t, expected_t);
-                assert_eq!(f, 0.0);
-            }
-
-            let (t_end, f_end) = calc_token_limit(
-                stage_duration,
-                stage_duration,
-                start_rate,
-                end_rate,
-                0.0,
-                tick,
-            );
-            assert_eq!(t_end, 0);
-            assert_eq!(f_end, 0.0);
-        }
-
-        #[test]
-        fn hold_steady() {
-            let stage_duration = Duration::from_secs(10);
-            let tick = Duration::from_millis(100);
-            let start_rate = 100.;
-            let end_rate = start_rate;
-
-            for i in 0..10 {
-                let elapsed = Duration::from_secs(i);
-                let (t, f) =
-                    calc_token_limit(elapsed, stage_duration, start_rate, end_rate, 0.0, tick);
-                let expected_t = 10;
-                assert_eq!(t, expected_t);
-                assert_eq!(f, 0.0);
-            }
-        }
-
-        #[test]
-        fn ramp_up() {
-            let stage_duration = Duration::from_secs(10);
-            let tick = Duration::from_millis(100);
-            let start_rate = 0.;
-            let end_rate = 100.;
-
-            for i in 0..10 {
-                let elapsed = Duration::from_secs(i);
-                let (t, f) =
-                    calc_token_limit(elapsed, stage_duration, start_rate, end_rate, 0., tick);
-                let expected_t = (i) as usize;
-                assert_eq!(t, expected_t);
-                assert_eq!(f, 0.);
-            }
-        }
-
-        #[test]
-        fn elapsed_over_duartion_cap_at_end_rate() {
-            for i in 0..10 {
-                let elapsed = 10 + i;
-                let (t, f) = calc_token_limit(
-                    Duration::from_secs(elapsed),
-                    Duration::from_secs(10),
-                    0.,
-                    100.,
-                    0.,
-                    Duration::from_millis(100),
-                );
-
-                // the rate should never change get over a max (10 in this case) if elapsed over duration
-                assert_eq!(t, 10);
-                assert_eq!(f, 0.);
-            }
-        }
-
-        #[test]
-        fn negative_value_returns_0() {
-            let (t, f) = calc_token_limit(
-                Duration::from_secs(1),
-                Duration::from_secs(10),
-                -100.,
-                -100.,
-                0.,
-                Duration::from_millis(100),
-            );
-
-            // The function should cap negative token counts at 0
-            assert_eq!(t, 0);
-            assert_eq!(f, 0.0);
-        }
-
-        #[test]
-        fn extreme_rate_cap_at_max_tokens() {
-            let (t, f) = calc_token_limit(
-                Duration::from_secs(1),
-                Duration::from_secs(1),
-                f64::MAX,
-                f64::MAX,
-                0.,
-                Duration::from_secs(1),
-            );
-
-            assert_eq!(t, MAX_TOKENS);
-            assert_eq!(f, 0.);
-        }
-    }
 }
