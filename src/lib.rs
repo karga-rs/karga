@@ -14,7 +14,7 @@
 //! - [`Scenario`]: configuration object that defines the action to be executed
 //! - [`Executor`]: responsible for actually running the scenario. Executors control
 //!   concurrency, scheduling, and are the primary place where performance matters. We provide
-//!   a high-performance `StageExecutor`, but executors are replaceable.
+//!   a high-performance `RateExecutor`, but executors are replaceable.
 //! - [`Metric`]: the smallest unit produced by an action. A scenario’s action returns a
 //!   `Metric` describing a single sample.
 //! - [`Aggregate`]: a lightweight, specialized collector that knows how to process

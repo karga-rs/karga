@@ -4,8 +4,9 @@
 //! executors provide different execution strategies: sequential, concurrent,
 //! distributed, or token-bucket-based.
 //!
-//! Karga provides a built-in [`StageExecutor`] which uses a token-bucket governor
-//! driven by a list of [`Stage`]s to control the request rate.
+//! Karga provides a built-in [`RateExecutor`] which uses a high-precision and
+//! high-performance rate control system to manage throughput across multiple
+//! [`Stage`]s.
 pub mod rate;
 pub use rate::{RateExecutor, Stage};
 
