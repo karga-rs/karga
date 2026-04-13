@@ -107,13 +107,13 @@ impl InternalStage {
     fn tokens_at(&self, now: u64) -> f64 {
         // duration 0
         if self.abs_start_ns == self.abs_end_ns {
-            return self.end_rate as f64;
+            return self.end_rate;
         };
         let total_secs = (self.abs_end_ns - self.abs_start_ns) as f64 / NANOS_PER_SEC;
         let slider = (now.clamp(self.abs_start_ns, self.abs_end_ns) - self.abs_start_ns) as f64
             / NANOS_PER_SEC;
 
-        let (rend, rst) = (self.end_rate as f64, self.start_rate as f64);
+        let (rend, rst) = (self.end_rate, self.start_rate);
         let base_tokens = rst * slider;
         let slope = 0.5 * (rend - rst) * (slider * slider / total_secs);
         base_tokens + slope
