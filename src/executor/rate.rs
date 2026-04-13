@@ -417,7 +417,7 @@ mod tests {
             let end_rate = 100.;
             let s = InternalStage {
                 abs_start_ns: 0,
-                abs_end_ns: 10 * NANOS_PER_SEC as u64,
+                abs_end_ns: TDUR,
                 start_rate,
                 end_rate,
             };
@@ -435,10 +435,71 @@ mod tests {
                 abs_start_ns: 0,
                 abs_end_ns: 0,
                 start_rate: 0.,
-                end_rate: 1000.,
+                end_rate: 100.,
             };
             let tokens = s.tokens_at(0);
             assert_eq!(tokens, s.end_rate)
+        }
+
+        #[test]
+        fn uncapped() {
+            let s = InternalStage {
+                abs_start_ns: 0,
+                abs_end_ns: TDUR,
+                start_rate: f64::MAX,
+                end_rate: f64::MAX,
+            };
+
+            assert_eq!(s.total_area(), f64::INFINITY);
+        }
+    }
+
+    mod rate_limiter {
+        use std::{sync::atomic::Ordering, time::Duration};
+
+        use crate::{executor::rate::RateLimiter, Stage};
+
+        #[test]
+        fn test_over() {
+            let sts = vec![
+                Stage {
+                    duration: Duration::from_millis(10),
+                    target: 100.,
+                },
+                Stage {
+                    duration: Duration::from_millis(50),
+                    target: 100.,
+                },
+            ];
+            let rl = RateLimiter::new(&sts);
+            assert_eq!(rl.total_duration, Duration::from_millis(60))
+        }
+        #[test]
+        fn double_refill() {
+            let sts = vec![Stage {
+                duration: Duration::from_secs(10),
+                target: 100.,
+            }];
+            let rl = RateLimiter::new(&sts);
+            let now = Duration::from_secs(5).as_nanos() as u64;
+            rl.refill(now);
+            let mnt = rl.tokens_minted.load(Ordering::Relaxed);
+
+            rl.refill(now);
+            let mnt2 = rl.tokens_minted.load(Ordering::Relaxed);
+
+            assert_eq!(mnt, mnt2);
+            assert_eq!(mnt, 125);
+        }
+
+        #[tokio::test]
+        async fn end_test() {
+            let sts = vec![Stage {
+                duration: Duration::from_nanos(1),
+                target: 1.,
+            }];
+            let rl = RateLimiter::new(&sts);
+            assert_eq!(rl.acquire().await, None);
         }
     }
 }
