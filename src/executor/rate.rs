@@ -101,11 +101,11 @@ struct RateLimiter {
 }
 
 impl RateLimiter {
-    fn new(stages: &[Stage], max_burst: f64) -> Self {
+    fn new(stages: &[Stage], max_burst: f64, start_rate: f64) -> Self {
         let now = Instant::now();
         RateLimiter {
             tokens: Semaphore::new(0),
-            stages: Self::stages_to_internal(stages),
+            stages: Self::stages_to_internal(stages, start_rate),
             total_duration: Self::total_duration(stages),
             start: now,
             tokens_minted: AtomicU64::new(0),
@@ -177,9 +177,9 @@ impl RateLimiter {
         stages.iter().map(|s| s.duration).sum()
     }
 
-    fn stages_to_internal(stages: &[Stage]) -> Vec<InternalStage> {
+    fn stages_to_internal(stages: &[Stage], start_rate: f64) -> Vec<InternalStage> {
         let mut internals = Vec::with_capacity(stages.len());
-        let (mut last_abs_end, mut last_rate_end) = (0, 0.);
+        let (mut last_abs_end, mut last_rate_end) = (0, start_rate);
         for s in stages.iter() {
             internals.push(InternalStage {
                 abs_start_ns: last_abs_end,
@@ -208,6 +208,8 @@ pub struct RateExecutor {
     pub workers: usize,
     #[builder(default = f64::MAX)]
     pub max_burst: f64,
+    #[builder(default = 0.)]
+    pub start_rate: f64,
 }
 
 impl<A, F, Fut> Executor<A, F, Fut> for RateExecutor
@@ -219,7 +221,11 @@ where
 {
     type Error = Box<dyn std::error::Error>;
     async fn exec(&self, scenario: &Scenario<A, F, Fut>) -> Result<A, Self::Error> {
-        let rlt = Arc::new(RateLimiter::new(&self.stages, self.max_burst));
+        let rlt = Arc::new(RateLimiter::new(
+            &self.stages,
+            self.max_burst,
+            self.start_rate,
+        ));
 
         tracing::info!("Spawning {} workers...", self.workers);
         let handles = spawn_workers(rlt.clone(), self.workers, scenario.action.clone()).await;
@@ -409,7 +415,7 @@ mod tests {
                     target: 100.,
                 },
             ];
-            let rl = RateLimiter::new(&sts, f64::MAX);
+            let rl = RateLimiter::new(&sts, f64::MAX, 0.);
             assert_eq!(rl.total_duration, Duration::from_millis(60))
         }
         #[test]
@@ -418,7 +424,7 @@ mod tests {
                 duration: Duration::from_secs(10),
                 target: 100.,
             }];
-            let rl = RateLimiter::new(&sts, f64::MAX);
+            let rl = RateLimiter::new(&sts, f64::MAX, 0.);
             let now = Duration::from_secs(5).as_nanos() as u64;
             rl.refill(now);
             let mnt = rl.tokens_minted.load(Ordering::Relaxed);
@@ -436,7 +442,7 @@ mod tests {
                 duration: Duration::from_nanos(1),
                 target: 1.,
             }];
-            let rl = RateLimiter::new(&sts, f64::MAX);
+            let rl = RateLimiter::new(&sts, f64::MAX, 0.);
             assert_eq!(rl.acquire().await, None);
         }
     }
