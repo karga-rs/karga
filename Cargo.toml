@@ -13,7 +13,12 @@ categories = ["development-tools::profiling"]
 publish = true
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "time",
+  "sync",
+] }
 serde = { version = "1", features = ["derive"] }
 typed-builder = "0.21"
 futures = "0.3.31"
