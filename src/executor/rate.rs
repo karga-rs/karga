@@ -97,10 +97,11 @@ struct RateLimiter {
     /// Marks how many tokens were minted up to this point
     /// combined with tokens_at we can get how many tokens must be added to fill the gap
     tokens_minted: AtomicU64,
+    max_burst: f64,
 }
 
 impl RateLimiter {
-    fn new(stages: &[Stage]) -> Self {
+    fn new(stages: &[Stage], max_burst: f64) -> Self {
         let now = Instant::now();
         RateLimiter {
             tokens: Semaphore::new(0),
@@ -108,12 +109,14 @@ impl RateLimiter {
             total_duration: Self::total_duration(stages),
             start: now,
             tokens_minted: AtomicU64::new(0),
+            max_burst,
         }
     }
 
     pub async fn acquire(&self) -> Option<u32> {
         loop {
             let now = Instant::now().duration_since(self.start);
+
             if now > self.total_duration {
                 self.tokens.close();
                 return None;
@@ -144,7 +147,7 @@ impl RateLimiter {
         let minted = self.tokens_minted.load(Ordering::Acquire);
         if expected as u64 > minted {
             // fill the gap between the math and reality
-            let add = expected as u64 - minted;
+            let add = (expected as u64 - minted).min(self.max_burst as u64);
             if self
                 .tokens_minted
                 .compare_exchange(minted, minted + add, Ordering::AcqRel, Ordering::Relaxed)
@@ -203,6 +206,8 @@ pub struct RateExecutor {
     pub stages: Vec<Stage>,
     /// The number of concurrent worker tasks to spawn.
     pub workers: usize,
+    #[builder(default = f64::MAX)]
+    pub max_burst: f64,
 }
 
 impl<A, F, Fut> Executor<A, F, Fut> for RateExecutor
@@ -214,7 +219,7 @@ where
 {
     type Error = Box<dyn std::error::Error>;
     async fn exec(&self, scenario: &Scenario<A, F, Fut>) -> Result<A, Self::Error> {
-        let rlt = Arc::new(RateLimiter::new(&self.stages));
+        let rlt = Arc::new(RateLimiter::new(&self.stages, self.max_burst));
 
         tracing::info!("Spawning {} workers...", self.workers);
         let handles = spawn_workers(rlt.clone(), self.workers, scenario.action.clone()).await;
@@ -404,7 +409,7 @@ mod tests {
                     target: 100.,
                 },
             ];
-            let rl = RateLimiter::new(&sts);
+            let rl = RateLimiter::new(&sts, f64::MAX);
             assert_eq!(rl.total_duration, Duration::from_millis(60))
         }
         #[test]
@@ -413,7 +418,7 @@ mod tests {
                 duration: Duration::from_secs(10),
                 target: 100.,
             }];
-            let rl = RateLimiter::new(&sts);
+            let rl = RateLimiter::new(&sts, f64::MAX);
             let now = Duration::from_secs(5).as_nanos() as u64;
             rl.refill(now);
             let mnt = rl.tokens_minted.load(Ordering::Relaxed);
@@ -431,7 +436,7 @@ mod tests {
                 duration: Duration::from_nanos(1),
                 target: 1.,
             }];
-            let rl = RateLimiter::new(&sts);
+            let rl = RateLimiter::new(&sts, f64::MAX);
             assert_eq!(rl.acquire().await, None);
         }
     }
