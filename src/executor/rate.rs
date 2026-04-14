@@ -49,6 +49,7 @@ const MAX_TOKENS: usize = usize::MAX >> 3;
 const NANOS_PER_SEC: f64 = 1_000_000_000.0;
 
 /// A pre-calculated representation of a rate-limiting stage for fast lookup
+#[derive(Debug)]
 struct InternalStage {
     abs_start_ns: u64,
     abs_end_ns: u64,
@@ -89,6 +90,7 @@ impl InternalStage {
 /// which workers depend on to peform any work, handling of batches and burst control
 ///
 /// It is **lock-free** and works on the **pull model**
+#[derive(Debug)]
 struct RateLimiter {
     tokens: Semaphore,
     stages: Vec<InternalStage>,
@@ -98,10 +100,19 @@ struct RateLimiter {
     /// combined with tokens_at we can get how many tokens must be added to fill the gap
     tokens_minted: AtomicU64,
     max_burst: f64,
+    max_batch: u64,
+    workers: usize,
+    batch: AtomicU64,
 }
 
 impl RateLimiter {
-    fn new(stages: &[Stage], max_burst: f64, start_rate: f64) -> Self {
+    fn new(
+        stages: &[Stage],
+        max_burst: f64,
+        max_batch: u64,
+        start_rate: f64,
+        workers: usize,
+    ) -> Self {
         let now = Instant::now();
         RateLimiter {
             tokens: Semaphore::new(0),
@@ -110,6 +121,9 @@ impl RateLimiter {
             start: now,
             tokens_minted: AtomicU64::new(0),
             max_burst,
+            max_batch,
+            workers,
+            batch: AtomicU64::new(1),
         }
     }
 
@@ -122,16 +136,21 @@ impl RateLimiter {
                 return None;
             };
 
-            if let Ok(p) = self.tokens.try_acquire() {
+            let mut batch = self.batch.load(Ordering::Relaxed) as u32;
+            if let Ok(p) = self.tokens.try_acquire_many(batch) {
                 p.forget();
-                return Some(1);
+                return Some(batch);
             }
 
             self.refill(now.as_nanos() as u64);
-            match tokio::time::timeout(Duration::from_millis(100), self.tokens.acquire()).await {
+            // we load again because the size of the batch might have changed after the refill
+            batch = self.batch.load(Ordering::Relaxed) as u32;
+            match tokio::time::timeout(Duration::from_millis(100), self.tokens.acquire_many(batch))
+                .await
+            {
                 Ok(Ok(p)) => {
                     p.forget();
-                    return Some(1);
+                    return Some(batch);
                 }
                 _ => continue,
             };
@@ -155,6 +174,11 @@ impl RateLimiter {
             {
                 self.tokens.add_permits(MAX_TOKENS.min(add as usize));
             };
+            let batch = ((add / self.workers as u64 / 50)
+                .min(self.max_burst as u64)
+                .min(self.max_batch))
+            .max(1);
+            self.batch.store(batch, Ordering::Release);
         };
     }
 
@@ -210,6 +234,14 @@ pub struct RateExecutor {
     pub max_burst: f64,
     #[builder(default = 0.)]
     pub start_rate: f64,
+
+    /// Batch sizes are calculated automatically from the rate but if you need control over batch sizes
+    /// in situations like tests with target at infinity this got you covered;
+    ///
+    /// Also, if you want to disable batches altogether just set this to 1
+    /// Default to 20 because its a reasonable number for most cases
+    #[builder(default = 20)]
+    pub max_batch: u64,
 }
 
 impl<A, F, Fut> Executor<A, F, Fut> for RateExecutor
@@ -224,7 +256,9 @@ where
         let rlt = Arc::new(RateLimiter::new(
             &self.stages,
             self.max_burst,
+            self.max_batch,
             self.start_rate,
+            self.workers,
         ));
 
         tracing::info!("Spawning {} workers...", self.workers);
@@ -402,6 +436,11 @@ mod tests {
         use std::{sync::atomic::Ordering, time::Duration};
 
         use crate::{executor::rate::RateLimiter, Stage};
+        macro_rules! rlm {
+            ($s:ident) => {
+                RateLimiter::new(&$s, f64::MAX, 1, 0., 1)
+            };
+        }
 
         #[test]
         fn test_over() {
@@ -415,7 +454,7 @@ mod tests {
                     target: 100.,
                 },
             ];
-            let rl = RateLimiter::new(&sts, f64::MAX, 0.);
+            let rl = rlm!(sts);
             assert_eq!(rl.total_duration, Duration::from_millis(60))
         }
         #[test]
@@ -424,7 +463,7 @@ mod tests {
                 duration: Duration::from_secs(10),
                 target: 100.,
             }];
-            let rl = RateLimiter::new(&sts, f64::MAX, 0.);
+            let rl = rlm!(sts);
             let now = Duration::from_secs(5).as_nanos() as u64;
             rl.refill(now);
             let mnt = rl.tokens_minted.load(Ordering::Relaxed);
@@ -442,8 +481,37 @@ mod tests {
                 duration: Duration::from_nanos(1),
                 target: 1.,
             }];
-            let rl = RateLimiter::new(&sts, f64::MAX, 0.);
+            let rl = rlm!(sts);
             assert_eq!(rl.acquire().await, None);
+        }
+
+        #[test]
+        fn batching() {
+            let sts = vec![Stage {
+                duration: Duration::from_secs(1),
+                target: 500.,
+            }];
+
+            let rl = RateLimiter::new(&sts, 500., 500, 500., 2);
+            let batch = rl.batch.load(Ordering::Relaxed);
+            assert_eq!(batch, 1);
+            rl.refill(Duration::from_secs(1).as_nanos() as u64);
+            let batch = rl.batch.load(Ordering::Relaxed);
+            // given that we have 2 workers and each need to hit 50 times a second
+            assert_eq!(batch, 5);
+        }
+        #[test]
+        fn max_batch() {
+            let sts = vec![Stage {
+                duration: Duration::from_secs(1),
+                target: f64::MAX,
+            }];
+            let rl = RateLimiter::new(&sts, f64::MAX, 10, f64::MAX, 1);
+            let batch = rl.batch.load(Ordering::Relaxed);
+            assert_eq!(batch, 1);
+            rl.refill(Duration::from_secs(1).as_nanos() as u64);
+            let batch = rl.batch.load(Ordering::Relaxed);
+            assert_eq!(batch, 10);
         }
     }
 }
