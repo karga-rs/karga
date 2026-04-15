@@ -1,173 +1,41 @@
-# karga
+# Karga
 
-[![crates.io](https://img.shields.io/crates/v/karga.svg)](https://crates.io/crates/karga)
+Foundational primitives and a high-performance execution engine for load testing in Rust.
 
-A small, flexible **load-testing core** for Rust — think *serde* but for load testing. karga provides the building blocks (scenarios, executors, metrics, aggregates, reporters) and leaves the concrete implementations to you or your ecosystem: HTTP, Kafka, filesystem or CI integration can all live in separate crates that depend on `karga`.
+Karga provides the foundational building blocks for load-testing: scenarios, executors, metrics, aggregates, and reporters.
+It does not dictate protocol or output format; you compose the components that fit your specific requirements.
 
-> **Philosophy.** karga is built for composability and extensibility. The core exposes traits and tiny primitives so consumers can implement their own executors, metrics, reporters or even whole testing frameworks on top of karga. If you like how `serde` defines traits and lets others implement `serde_json` and `serde_yaml`, you'll feel at home.
+If you can write an `async` function for it, Karga can orchestrate it, scale it, and measure it. Whether you are benchmarking
+HTTP APIs, gRPC streams, raw WebSockets, database driver throughput, or local file I/O. Karga makes no assumptions about your
+workload.
 
----
+## Core Philosophy
 
-## Table of contents
+- **Composable**: A slim core with pluggable components.
+- **Performant**: Built for low-overhead and high-precision execution.
+- **Generic**: Powered by traits. If you can measure it, you can load-test it.
 
-* [Quickstart](#quickstart)
-* [Core concepts](#core-concepts)
-* [Example](#example)
-* [Design & extensibility](#design--extensibility)
-* [Roadmap](#roadmap)
-* [License](#license)
-* [Special Thanks](#special-thanks)
+## Architecture
 
----
+- **`Metric`**: The raw, granular measurement produced by a single execution of your workload.
+- **`Aggregate`**: A fast, safely mergeable data structure that collects and compacts `Metric`s.
+- **`Report`**: The final, derived statistics (e.g., percentiles, averages).
+- **`Scenario`**: The definition of the workload.
+- **`Executor`**: The runtime strategy that drives the scenario.
+- **`Reporter`**: The I/O boundary that exports the `Report` (stdout, Prometheus, JSON, etc.).
 
-## Quickstart
+## Usage & Documentation
+Because Karga is a foundation for building tools, the best way to understand how to compose these traits is through the API documentation.
+[Read the Karga documentation on docs.rs](https://docs.rs/karga) for architectural details, implementation guides, and examples.
 
-Clone the repo and run the included example (the examples are intentionally minimal and focused on showing how to plug into karga — the `reqwest` HTTP example is just the easiest illustration):
+## Built-in executors
+While the workload and its metrics will vary for each use case, the execution models are much more general and do not vary as much.
 
-```bash
-git clone https://github.com/karga-rs/karga.git
-cd karga
-cargo run --example http
-```
+Karga provides built-in executors for the most common use cases, but you are free to implement your own or use a third-party
+executor that fits your system's constraints.
 
-That example demonstrates measuring request latency and success (HTTP 200) using a simple executor. Replace the action with any async closure to exercise custom code (Kafka producer, filesystem workload, or any I/O you want).
-
----
-
-## Core concepts
-
-These are the primitives you will see in the codebase and should implement or compose with:
-
-  * **Scenario** — the high-level unit of a test. It ties together a name, an action (an async closure), and an executor.
-  * **Executor** — responsible for running the action (single-shot, looped, concurrent workers, etc.). Executors are intentionally externalized so you can provide different models.
-  * **Metric** — a single measurement returned by an action (latency, boolean success, bytes written, etc.).
-  * **Aggregate** — a way to combine many `Metric` values into summaries over time.
-  * **Report** — process aggregated metrics into useful data (such as percentiles)
-  * **Reporter** - sends a report somewhere: console, JSON/CSV export, HTTP endpoints, or integrations with monitoring systems.
-
-All of these are trait-driven and designed for generics + composition.
-
----
-
-## Example
-
-Here is a full, runnable example demonstrating a staged load test against an HTTP server.
-
-```rust
-use std::time::{Duration, Instant};
-
-use karga::{
-    Executor, Reporter, Scenario,
-    aggregate::BasicAggregate,
-    executor::{Stage, StageExecutor},
-    metric::BasicMetric,
-    report::{BasicReport, StdoutReporter},
-};
-use reqwest::Client;
-
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt().init();
-    // NEVER instantiate heavy things like clients inside the action
-    // unless you want to kill performance
-    let client = Client::new();
-
-    let results: BasicAggregate = StageExecutor::builder()
-        .stages(vec![
-            // Start with a ramp up from 0 to 10 over 3 seconds
-            Stage::new(Duration::from_secs(3), 10.0),
-            // Increase the rate of change to go from 10 to 100 over the
-            // next 3 seconds
-            Stage::new(Duration::from_secs(3), 100.0),
-            // ramp down from 100 to 10 over the next 3 sceonds
-            Stage::new(Duration::from_secs(3), 10.0),
-        ])
-        .build()
-        .exec(
-            &Scenario::builder()
-                .name("Http scenario")
-                .action(move || {
-                    let client = client.clone();
-                    async move {
-                        let start = Instant::now();
-
-                        // Yeah lets hardcode it
-                        let res = client.get("http://localhost:3000").send().await;
-                        let success = match res {
-                            Ok(r) => r.status() == 200,
-                            Err(_) => false,
-                        };
-                        let elapsed = start.elapsed();
-                        BasicMetric {
-                            latency: elapsed,
-                            success,
-                            // We dont care about it in this example
-                            bytes: 0,
-                        }
-                    }
-                })
-                .build(),
-        )
-        .await
-        .unwrap();
-
-    let report = BasicReport::from(results);
-    // Thats quite strange syntax but whatever
-    StdoutReporter {}.report(&report).await.unwrap();
-}
-```
-
-The real `http` example in the repo shows a tiny `reqwest`-based action that records latency and a boolean success flag — use it as a starting point and swap the body for Kafka, gRPC or other protocols.
-
----
-
-## Design & extensibility
-
-  * **Serde-like core** — karga focuses on representing the *what* (scenarios, metrics) and not the *how*. Implementations live in separate crates.
-  * **Generic-first API** — heavy use of traits and generics to make composing components ergonomic and zero-cost where possible.
-  * **Closure-driven actions** — define workloads as simple async closures so users can embed arbitrary logic without boilerplate.
-  * **Composable pipelines** — metrics flow from actions → aggregates → reports. Each stage is pluggable.
-
-### How to extend
-
-  * Implement the `Executor` trait to introduce a custom concurrency model (for example, worker pools that publish to Kafka).
-  * Implement a `Reporter` to ship results to your CI, log aggregator, or a custom dashboard.
-  * Write an `Metric` `Aggregate` and `Report` for some specific protocol or use case.
-
----
-
-## Roadmap
-
-Ideas and possible future additions:
-
-  * official adapters / example crates for HTTP, gRPC, and filesystem workloads
-  * CI integration helpers and example GitHub Actions workflows
-  * official distributed executor
-
-
-If you have a particular integration in mind (Kafka, Prometheus, a hosted service), I can help scaffold it.
-
----
-
-## Contributing
-
-Contributions welcome. Keep changes focused and idiomatic Rust. If you plan to publish a separate crate that depends on `karga`, feel free to go for it.
-
-Please avoid using `karga` for attacks or illegal activity — this library is meant for development and testing only.
-
----
+You can find more about the executors in the documentation.
 
 ## License
 
-`karga` is MIT-licensed — see the `LICENSE` file in the repository.
-
----
-
-## Special Thanks
-
-  * [k6](https://github.com/grafana/k6)
-  * [goose](https://github.com/tag1consulting/goose)
-  * [rlt](https://github.com/wfxr/rlt)
-  * [serde](https://github.com/serde-rs/serde)
-
-Huge thanks to those projects for ideas and inspiration.
+`karga` is licensed under the MIT license.
