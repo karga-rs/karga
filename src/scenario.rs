@@ -1,47 +1,43 @@
-//! The [`Scenario`] struct defines the workload definition layer of karga
+//! The [`Scenario`] ties an async action to an aggregation strategy.
 //!
-//! A *scenario* represents a complete test or benchmark definition — it specifies
-//! what to run (`action`), and how the results will be aggregated (`Aggregate`).
-//!
-//! Typically, a scenario is constructed using [`typed_builder::TypedBuilder`] and then passed
-//! down to an [`Executor`], acting as a configuration object
+//! A scenario is a configuration object that defines *what* to run (the `action`)
+//! and *how* to collect the results ([`Aggregate`]). It is protocol-agnostic; the
+//! action can be any async function returning a [`Metric`].
 //!
 //! # Example
-//! ```rust,ignore
-//! use std::time::Duration;
-//! use karga::Scenario;
-//! use karga::metric::BasicMetric;
-//! use karga::aggregate::BasicAggregate;
 //!
-//! // Build a scenario. The `action` produces a metric; the executor runs it.
-//! let scenario = Scenario::builder()
-//!     .name("example")
+//! ```rust
+//! use std::time::Duration;
+//! use karga::{Scenario, Metric, Aggregate};
+//!
+//! #[derive(Clone, PartialEq, PartialOrd)]
+//! struct MyMetric(Duration);
+//! impl Metric for MyMetric {}
+//!
+//! #[derive(Clone)]
+//! struct MyAggregate(u64);
+//! impl Aggregate for MyAggregate {
+//!     type Metric = MyMetric;
+//!     fn new() -> Self { Self(0) }
+//!     fn consume(&mut self, _: &Self::Metric) { self.0 += 1; }
+//!     fn merge(&mut self, other: Self) { self.0 += other.0; }
+//! }
+//!
+//! let scenario: Scenario<MyAggregate, _, _> = Scenario::builder()
+//!     .name("my-workload")
 //!     .action(|| async {
-//!         // Simulate work and produce a metric
-//!         BasicMetric { latency: Duration::from_millis(10), success: true, bytes: 512 }
+//!         // Perform work...
+//!         MyMetric(Duration::from_millis(10))
 //!     })
 //!     .build();
 //! ```
 //!
-//! # Design goals
-//! - **Composability:** all major components remain generic.
-//! - **Determinism:** scenarios define repeatable, isolated executions.
+//! # Performance Guidelines
 //!
-//! # Notes on `action`
-//!
-//! The `action` is the user-provided function (typically an async closure) that produces a
-//! single metric sample. Important guidelines:
-//!
-//! - **Closure capture for shared state:** the action cannot receive arguments, so capture
-//!   any shared clients or resources in the closure (for example, an `reqwest::Client`).
-//! - **No heavy initialization inside the action:** constructing heavy objects inside the
-//!   action (such as creating a new HTTP client on every invocation) will drastically
-//!   reduce throughput. In extreme cases this can change performance by orders of magnitude
-//!   (e.g., a benchmark running at hundreds of thousands of RPS could collapse to only
-//!   a few hundred RPS if the action creates expensive resources each call).
-//! - **Prefer cloning lightweight handles:** if a client is cheaply clonable, clone it
-//!   inside the closure (captured from the outer scope) and reuse the underlying connection
-//!   pool or socket as appropriate.
+//! The `action` is executed repeatedly by the executor. To maintain high throughput:
+//! - **Capture state:** Capture shared resources (like HTTP clients) in the closure.
+//! - **Avoid heavy init:** Do not create expensive resources (clients, pools) inside the action.
+//! - **Cheap clones:** Clone lightweight handles (e.g., `Arc<T>`) inside the closure if needed.
 
 use crate::Aggregate;
 use std::future::Future;

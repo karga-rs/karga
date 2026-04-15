@@ -1,46 +1,28 @@
 use crate::Metric;
 
-/// The `Aggregate` trait defines how raw [`Metric`] values are collected and combined
-/// into an intermediate, mergeable representation that preserves the information
-/// necessary for later analysis.
+/// The [`Aggregate`] trait defines how raw [`Metric`] values are collected and combined
+/// into a mergeable representation that preserves the information necessary for analysis.
 ///
 /// **Important:** `Aggregate` implementations should **not** compute final statistics
-/// such as averages or percentiles. Those derived values belong in a [`crate::Report`], which
-/// is converted from an `Aggregate` and performs the final processing. Aggregates are
-/// responsible for storing compact, mergeable raw data (counts, sums, histograms,
-/// sketches, error counters, etc.) so that the `Report` stage can compute accurate
-/// summaries without losing information.
+/// such as averages or percentiles. Those derived values belong in a [`crate::Report`].
+/// Aggregates are responsible for storing compact, mergeable raw data (counts, sums,
+/// histograms, or sketches) so that the reporting stage can compute accurate summaries.
 ///
-/// # Role
+/// # Design Goals
 ///
-/// - Collect individual [`Metric`] samples produced by a `Scenario` action.
-/// - Store the minimal but sufficient information needed to compute final statistics
-///   later (for example: per-bucket histograms, counters, and totals).
-/// - Be cheaply mergeable so multiple worker-local aggregates can be combined into a
-///   global view.
-///
-/// # Design goals
-///
-/// - **Preserve information:** prefer representations that allow later computation of
-///   percentiles, rates, and error ratios without needing raw per-sample retention.
-/// - **Efficient to update & merge:** `consume` and `merge` should be optimized for
-///   frequent updates and parallel merges.
-///
-/// # Memory vs accuracy
-///
-/// Aggregates often embody a trade-off between memory use and analytic fidelity. A
-/// histogram with many buckets gives more accurate percentiles but consumes more memory;
-/// a compact sketch (e.g., t-digest) reduces memory at the cost of some precision. Pick
-/// the representation appropriate for your workload and document its error characteristics
-/// in the corresponding `Report` implementation.
+/// - **Preserve Information:** Use representations that allow later computation of
+///   percentiles and rates without needing raw per-sample retention.
+/// - **Efficient Merging:** `consume` and `merge` should be optimized for frequent updates.
+///   Merging must be **associative** and **commutative**.
 ///
 /// # Example
+///
 /// ```rust
 /// use karga::{Aggregate, Metric};
 ///
 /// #[derive(Clone, PartialOrd, PartialEq)]
 /// struct MyMetric(u64);
-/// impl Metric for MyMetric{}
+/// impl Metric for MyMetric {}
 ///
 /// #[derive(Clone)]
 /// struct MyAggregate {
@@ -81,7 +63,7 @@ use crate::Metric;
 ///
 /// # Reporter boundary
 ///
-/// Once a `Report` derives human- or machine-friendly statistics from one or more
+/// Once a `Report` derives human or machine-friendly statistics from one or more
 /// `Aggregate`s, a `Reporter` is responsible for converting that `Report` into the
 /// desired sink (stdout, file, database, telemetry system, etc.). Reporters are free to
 /// format, compress, or enrich reports as needed.

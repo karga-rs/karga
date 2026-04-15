@@ -13,15 +13,15 @@ pub use rate::{RateExecutor, Stage};
 use crate::{aggregate::Aggregate, scenario::Scenario};
 use std::future::Future;
 
-/// The runtime hook that executes a `Scenario`.
+/// The [`Executor`] is the runtime that drives a [`Scenario`].
 ///
-/// `Executor` defines the execution strategy for a given scenario, such as:
-/// - Simple sequential or concurrent runs.
-/// - Rate-limited execution (e.g., token-bucket).
-/// - Distributed execution across multiple nodes.
+/// It defines the execution strategy, such as:
+/// - Controlling throughput (e.g., token-bucket or RPS-based).
+/// - Managing concurrency and worker spawning.
+/// - Collecting and merging results from the scenario action.
 ///
-/// This trait is generic over the aggregate, action, and future types to remain
-/// flexible and composable.
+/// Karga provides built-in executors like [`RateExecutor`], but the trait is
+/// generic to allow for custom scheduling or distributed execution strategies.
 pub trait Executor<A, F, Fut>
 where
     Self: Send + Sync + Sized,
@@ -30,11 +30,11 @@ where
     Fut: Future<Output = A::Metric> + Send,
 {
     type Error;
+
     /// Execute the scenario and return the final aggregate.
     ///
-    /// This function is responsible for implementing the execution strategy,
-    /// such as spawning workers, managing concurrency, and collecting
-    /// results from the `scenario.action`.
+    /// This function orchestrates the spawning of workers, management of
+    /// rate limits, and the final collection of [`Aggregate`] data.
     fn exec(
         &self,
         scenario: &Scenario<A, F, Fut>,

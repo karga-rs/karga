@@ -6,42 +6,43 @@ use crate::Aggregate;
 
 /// A [`Report`] represents the processed form of an [`Aggregate`].
 ///
-/// Reports transform raw aggregated data into meaningful insights — such as
-/// averages, percentiles, ratios, and totals. They are *pure data structures*, free
-/// of side effects and I/O, and should encapsulate only the logic needed to derive
-/// final, human- or machine-readable results.
+/// Reports transform raw aggregated data into meaningful insights such as
+/// averages, percentiles, or ratios. They are *pure data structures*, free
+/// of side effects, and encapsulate the logic needed to derive final results.
 ///
 /// Implementors must define how to construct the report from an [`Aggregate`], typically
-/// via a [`From<A>`] implementation. Once created, a report can be serialized, logged,
-/// or consumed by a [`Reporter`].
-///
-/// # Design goals
-/// - **Purity:** reports contain no I/O; they are deterministic data transformations.
-/// - **Serializability:** all reports must implement [`Serialize`] and [`DeserializeOwned`].
-/// - **Composability:** the same aggregate type can feed multiple report implementations
-///   with different analytical focuses.
+/// via a [`From<A>`] implementation.
 ///
 /// # Example
-/// ```rust, ignore
-/// use karga::{Aggregate, Report};
+///
+/// ```rust
+/// use karga::{Aggregate, Report, Metric};
 /// use serde::{Serialize, Deserialize};
-/// use std::time::Duration;
+///
+/// #[derive(Clone, PartialOrd, PartialEq)]
+/// struct MyMetric(u64);
+/// impl Metric for MyMetric {}
+///
+/// #[derive(Clone)]
+/// struct MyAggregate { count: u64, sum: u128 }
+/// impl Aggregate for MyAggregate {
+///     type Metric = MyMetric;
+///     fn new() -> Self { Self { count: 0, sum: 0 } }
+///     fn consume(&mut self, m: &MyMetric) { self.count += 1; self.sum += m.0 as u128; }
+///     fn merge(&mut self, o: Self) { self.count += o.count; self.sum += o.sum; }
+/// }
 ///
 /// #[derive(Debug, Serialize, Deserialize)]
-/// struct MyReport {
-///     average_latency: Duration,
-/// }
+/// struct MyReport { average: f64 }
 ///
 /// impl From<MyAggregate> for MyReport {
 ///     fn from(a: MyAggregate) -> Self {
-///         Self { average_latency: a.total_latency / a.count as u32 }
+///         Self { average: a.sum as f64 / a.count as f64 }
 ///     }
 /// }
 ///
 /// impl Report<MyAggregate> for MyReport {}
 /// ```
-///
-/// See also: [`Reporter`].
 pub trait Report<A>
 where
     Self: Send + Sync + Debug + From<A> + Serialize + DeserializeOwned,
@@ -49,20 +50,23 @@ where
 {
 }
 
-/// A [`Reporter`] consumes a [`Report`] and performs side effects — displaying it,
-/// sending it to a service, or persisting it somewhere.
+/// A [`Reporter`] consumes a [`Report`] and performs side effects such as
+/// printing to stdout, sending to a database, or exporting to a monitoring system.
 ///
-/// Reporters represent the I/O boundary of Karga. They may be synchronous or async,
-/// and can target multiple destinations. This separation allows the computation layer
-/// (metrics → aggregates → reports) to remain pure and deterministic, while reporters
-/// handle presentation and export.
+/// Reporters represent the I/O boundary of Karga. This separation allows the
+/// computation layer (metrics -> aggregates -> reports) to remain pure and deterministic,
+/// while reporters handle presentation and export.
 ///
 /// # Example
+///
 /// ```rust
-/// use karga::{Reporter, Aggregate, Report};
-/// struct MyReporter;
-/// impl<A: Aggregate, R: Report<A>> Reporter<A, R> for MyReporter {
-///     type Error = Box<dyn std::error::Error>;
+/// # use karga::{Reporter, Aggregate, Report};
+/// # use std::future::Future;
+/// struct StdoutReporter;
+///
+/// impl<A: Aggregate, R: Report<A>> Reporter<A, R> for StdoutReporter {
+///     type Error = std::io::Error;
+///
 ///     async fn report(&self, report: &R) -> Result<(), Self::Error> {
 ///         println!("{:?}", report);
 ///         Ok(())

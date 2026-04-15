@@ -87,9 +87,9 @@ impl InternalStage {
 }
 
 /// The [`RateLimiter`] is responsible for controlling the minting of tokens
-/// which workers depend on to peform any work, handling of batches and burst control
+/// which workers depend on to perform any work, handling of batches and burst control.
 ///
-/// It is **lock-free** and works on the **pull model**
+/// It is **lock-free** and works on the **pull model**.
 #[derive(Debug)]
 struct RateLimiter {
     tokens: Semaphore,
@@ -223,23 +223,38 @@ impl RateLimiter {
 /// The `RateExecutor` uses a mathematical integral of the RPS curve to ensure
 /// nanosecond-perfect rate adherence across any number of stages.
 ///
-/// It utilizes a **Passive/Lazy Refill**, **lock-free** and **blazingly fast** model
+/// # Example
+///
+/// ```rust
+/// use std::time::Duration;
+/// use karga::{RateExecutor, Stage};
+///
+/// let executor = RateExecutor::builder()
+///     .workers(10)
+///     .stages(vec![
+///         Stage::new(Duration::from_secs(5), 100.0), // Ramp to 100 RPS
+///         Stage::new(Duration::from_secs(10), 100.0), // Hold 100 RPS
+///     ])
+///     .build();
+/// ```
 #[derive(TypedBuilder)]
 pub struct RateExecutor {
     /// The sequence of rate-control stages to execute.
     pub stages: Vec<Stage>,
     /// The number of concurrent worker tasks to spawn.
     pub workers: usize,
+    /// The maximum number of tokens that can be minted at once to catch up if the executor falls behind.
     #[builder(default = f64::MAX)]
     pub max_burst: f64,
+    /// The starting RPS for the first stage.
     #[builder(default = 0.)]
     pub start_rate: f64,
 
-    /// Batch sizes are calculated automatically from the rate but if you need control over batch sizes
-    /// in situations like tests with target at infinity this got you covered;
+    /// Batch sizes are calculated automatically from the rate, but if you need control over batch sizes
+    /// in situations like tests with target at infinity, this has you covered.
     ///
-    /// Also, if you want to disable batches altogether just set this to 1
-    /// Default to 20 because its a reasonable number for most cases
+    /// To disable batching, set this to 1.
+    /// Defaults to 20.
     #[builder(default = 20)]
     pub max_batch: u64,
 }
