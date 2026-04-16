@@ -27,8 +27,7 @@ use typed_builder::TypedBuilder;
 /// A stage defines a target RPS and how long to ramp to that target.
 ///
 /// Use `Stage::new(Duration::from_secs(10), 100.0)` to ramp to 100 RPS over 10s.
-/// If `duration` is `Duration::ZERO`, the executor will jump to the `target`
-/// RPS instantly.
+/// For a spike in rate, use a very small duration like `Duration::from_nanos(1)`.
 #[derive(Clone, Copy, Debug)]
 pub struct Stage {
     pub duration: Duration,
@@ -66,11 +65,6 @@ impl InternalStage {
     // not the ammount of tokens that should be added or the rate of change, which
     // simplifies its logic
     fn tokens_at(&self, now: u64) -> f64 {
-        // we use stages with 0 duration to simulate spikes so its a special case
-        // bypassing the math
-        if self.abs_start_ns == self.abs_end_ns {
-            return self.end_rate;
-        };
         let total_secs = (self.abs_end_ns - self.abs_start_ns) as f64 / NANOS_PER_SEC;
         let slider = (now.clamp(self.abs_start_ns, self.abs_end_ns) - self.abs_start_ns) as f64
             / NANOS_PER_SEC;
@@ -420,18 +414,6 @@ mod tests {
             assert_eq!(b, 20.);
             assert_eq!(c, 125.);
             assert_eq!(d, 500.)
-        }
-
-        #[test]
-        fn instant_jump() {
-            let s = InternalStage {
-                abs_start_ns: 0,
-                abs_end_ns: 0,
-                start_rate: 0.,
-                end_rate: 100.,
-            };
-            let tokens = s.tokens_at(0);
-            assert_eq!(tokens, s.end_rate)
         }
 
         #[test]
