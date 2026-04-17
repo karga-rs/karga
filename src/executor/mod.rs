@@ -7,10 +7,13 @@
 //! Karga provides a built-in [`RateExecutor`] which uses a high-precision and
 //! high-performance rate control system to manage throughput across multiple
 //! [`Stage`]s.
+
+#[cfg(feature = "tokio")]
 pub mod rate;
+use crate::{aggregate::Aggregate, scenario::Scenario};
+#[cfg(feature = "tokio")]
 pub use rate::{RateExecutor, Stage};
 
-use crate::{aggregate::Aggregate, scenario::Scenario};
 use std::future::Future;
 
 /// The [`Executor`] is the runtime that drives a [`Scenario`].

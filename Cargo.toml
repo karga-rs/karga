@@ -18,8 +18,11 @@ tokio = { version = "1", features = [
   "macros",
   "time",
   "sync",
-] }
+], optional = true }
 serde = { version = "1", features = ["derive"] }
 typed-builder = "0.21"
 futures = "0.3.31"
 tracing = "0.1"
+
+[features]
+tokio = ["dep:tokio"]

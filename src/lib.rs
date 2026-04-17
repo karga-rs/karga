@@ -19,6 +19,9 @@
 //! - **Flexibility**: Code that is simple to provide implementations for.
 //! - **Zero-Cost Abstractions**: Traits and generics are used to ensure that flexibility
 //!   does not come at the cost of execution performance.
+//!
+//! # Features
+//! - **tokio**: Enable runtimes that depend on the tokio ecosystem
 
 /// Metric aggregators
 pub mod aggregate;
@@ -32,7 +35,7 @@ pub mod report;
 pub mod scenario;
 
 pub use aggregate::Aggregate;
-pub use executor::{Executor, RateExecutor, Stage};
+pub use executor::*;
 pub use metric::Metric;
 pub use report::{Report, Reporter};
 pub use scenario::Scenario;
